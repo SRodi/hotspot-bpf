@@ -13,8 +13,9 @@ import (
 )
 
 type memory_bpfFaultStat struct {
-	Faults uint64
-	Cgroup [64]int8
+	Faults   uint64
+	RssPages uint64
+	Cgroup   [64]int8
 }
 
 // loadMemory_bpf returns the embedded CollectionSpec for memory_bpf.

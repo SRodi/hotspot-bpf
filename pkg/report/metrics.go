@@ -107,6 +107,9 @@ func BuildProcMetrics(
 		}
 		row.Faults = pf.Faults
 		row.FaultsPerSec = pf.FaultsPerSec
+		if pf.RSSBytes > 0 {
+			row.RSSMB = float64(pf.RSSBytes) / (1024 * 1024)
+		}
 	}
 
 	for _, pair := range contention {
@@ -130,7 +133,7 @@ func BuildProcMetrics(
 	}
 	rssMap := rssBytesForPIDs(pidList)
 	for pid, rss := range rssMap {
-		if row, ok := rows[uint32(pid)]; ok {
+		if row, ok := rows[uint32(pid)]; ok && row.RSSMB == 0 {
 			row.RSSMB = float64(rss) / (1024 * 1024)
 		}
 	}

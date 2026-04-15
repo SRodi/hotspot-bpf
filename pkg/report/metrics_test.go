@@ -353,4 +353,45 @@ func TestPassesFilters(t *testing.T) {
 	}
 }
 
+func TestBuildProcMetricsBPFRSSPreferred(t *testing.T) {
+	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
+	// /proc returns 100MB for pid 42
+	rssBytesForPIDs = func(pids []int) map[int]uint64 {
+		return map[int]uint64{42: 100 << 20}
+	}
+
+	interval := time.Second
+	// BPF reports 512MB via RSSBytes
+	pageFaults := []types.PageFaultStat{
+		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 512 << 20},
+	}
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval)
+	row, ok := index[42]
+	if !ok {
+		t.Fatal("missing row for pid 42")
+	}
+	if math.Abs(row.RSSMB-512) > 1e-3 {
+		t.Fatalf("expected BPF RSS (512MB) to take precedence, got %.3f MB", row.RSSMB)
+	}
+}
+
+func TestBuildProcMetricsFallbackToProcRSS(t *testing.T) {
+	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
+	// /proc returns 256MB
+	rssBytesForPIDs = func(pids []int) map[int]uint64 {
+		return map[int]uint64{99: 256 << 20}
+	}
+
+	interval := time.Second
+	// BPF has no RSS (RSSBytes=0 — e.g., older kernel)
+	pageFaults := []types.PageFaultStat{
+		{PID: 99, Comm: "app", Faults: 10, FaultsPerSec: 10, RSSBytes: 0},
+	}
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval)
+	row := index[99]
+	if math.Abs(row.RSSMB-256) > 1e-3 {
+		t.Fatalf("expected /proc fallback RSS (256MB), got %.3f MB", row.RSSMB)
+	}
+}
+
 func boolPtr(v bool) *bool { return &v }

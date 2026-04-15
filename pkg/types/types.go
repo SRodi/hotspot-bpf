@@ -34,4 +34,5 @@ type PageFaultStat struct {
 	Cgroup       string
 	Faults       uint64
 	FaultsPerSec float64
+	RSSBytes     uint64
 }

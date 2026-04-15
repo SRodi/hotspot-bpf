@@ -6,6 +6,7 @@
 
 struct fault_stat {
     u64 faults;
+    u64 rss_pages;
     char cgroup[64];
 };
 
@@ -63,19 +64,35 @@ static __always_inline bool snapshot_cgroup(char *dst, size_t len) {
     return false;
 }
 
+static __always_inline u64 read_rss_pages(struct task_struct *task) {
+    struct mm_struct *mm = BPF_CORE_READ(task, mm);
+    if (!mm)
+        return 0;
+    s64 file  = BPF_CORE_READ(mm, rss_stat[MM_FILEPAGES].count);
+    s64 anon  = BPF_CORE_READ(mm, rss_stat[MM_ANONPAGES].count);
+    s64 shmem = BPF_CORE_READ(mm, rss_stat[MM_SHMEMPAGES].count);
+    s64 total = file + anon + shmem;
+    return total > 0 ? (u64)total : 0;
+}
+
 static __always_inline int record_fault(void) {
     u32 pid = bpf_get_current_pid_tgid() >> 32;
     if (pid == 0)
         return 0;
 
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task_btf();
+    u64 rss = read_rss_pages(task);
+
     struct fault_stat *entry = bpf_map_lookup_elem(&page_faults, &pid);
     if (entry) {
         entry->faults++;
+        entry->rss_pages = rss;
         if (entry->cgroup[0] == '\0' && !snapshot_cgroup(entry->cgroup, sizeof(entry->cgroup)))
             write_placeholder(entry->cgroup, sizeof(entry->cgroup));
     } else {
         struct fault_stat init = {};
         init.faults = 1;
+        init.rss_pages = rss;
         if (!snapshot_cgroup(init.cgroup, sizeof(init.cgroup)))
             write_placeholder(init.cgroup, sizeof(init.cgroup));
         bpf_map_update_elem(&page_faults, &pid, &init, BPF_ANY);

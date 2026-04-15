@@ -6,6 +6,7 @@ package memory
 import (
 	"errors"
 	"fmt"
+	"os"
 	"sort"
 	"time"
 
@@ -22,6 +23,8 @@ type Collector struct {
 }
 
 const resetSweepRetries = 3
+
+var pageSize = uint64(os.Getpagesize())
 
 // NewCollector loads the page fault tracker and attaches it to the always-available
 // handle_mm_fault kprobe so we always capture fault activity.
@@ -72,6 +75,7 @@ func (c *Collector) Snapshot(limit int, window time.Duration) ([]types.PageFault
 			Cgroup:       cStr(stat.Cgroup[:]),
 			Faults:       stat.Faults,
 			FaultsPerSec: float64(stat.Faults) / windowSeconds,
+			RSSBytes:     stat.RSSPages * pageSize,
 		})
 	}
 	if err := iter.Err(); err != nil {
@@ -109,6 +113,7 @@ func (c *Collector) Reset() error {
 }
 
 type faultStat struct {
-	Faults uint64
-	Cgroup [64]byte
+	Faults   uint64
+	RSSPages uint64
+	Cgroup   [64]byte
 }
