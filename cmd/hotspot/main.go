@@ -174,7 +174,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 
 	// Focus section — all non-OK processes grouped by diagnosis
 	if len(focusGroups) > 0 {
-		buf.WriteString(ui.SectionHeader("Focus"))
+		buf.WriteString(ui.SectionHeader("Focus · Processes requiring attention"))
 		for _, group := range focusGroups {
 			buf.WriteString(ui.FocusGroupHeader(group.Diagnosis, len(group.Procs)))
 			for _, proc := range group.Procs {
@@ -187,7 +187,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 	}
 
 	// CPU Usage table
-	buf.WriteString(ui.SectionHeader(fmt.Sprintf("Top %d CPU · window %v", cfg.topK, cfg.interval)))
+	buf.WriteString(ui.SectionHeader(fmt.Sprintf("CPU Hotspots · Top %d processes by CPU time (window %v)", cfg.topK, cfg.interval)))
 	cpuRows := report.CPUUsageRows(filteredRows, cfg.topK)
 	if len(cpuRows) == 0 {
 		fmt.Fprintln(&buf, ui.C(ui.Dim, "No CPU samples for this window"))
@@ -205,31 +205,30 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 
 	// CPU Contention table
 	if contentionErr != nil {
-		buf.WriteString(ui.SectionHeader("CPU Contention"))
+		buf.WriteString(ui.SectionHeader("Scheduler Contention"))
 		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("unavailable: %v", contentionErr)))
 	} else {
-		buf.WriteString(ui.SectionHeader(fmt.Sprintf("CPU Contention · last %v", cfg.interval)))
+		buf.WriteString(ui.SectionHeader(fmt.Sprintf("Scheduler Contention · Which processes preempt others (window %v)", cfg.interval)))
 		rows := report.FilterContentionRows(contentionStats, filterCfg, procIndex, cfg.topK)
 		if len(rows) == 0 {
 			fmt.Fprintln(&buf, ui.C(ui.Dim, "No preemptions recorded in this window"))
 		} else {
 			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "PID\tCOMM\tPREEMPTED BY\tTIMES")
+			fmt.Fprintln(tw, "VICTIM PID\tVICTIM\tAGGRESSOR PID\tAGGRESSOR\tCOUNT")
 			for _, pair := range rows {
-				fmt.Fprintf(tw, "%d\t%s\t%d (%s)\t%d\n",
+				fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%d\n",
 					pair.VictimPID, pair.VictimComm, pair.AggressorPID, pair.AggressorComm, pair.Count)
 			}
 			tw.Flush()
 		}
 	}
 
-	// CPU Cost per Fault table
-	buf.WriteString(ui.SectionHeader("CPU Cost per Fault · CPU vs Page Faults"))
+	// Memory Pressure table
+	buf.WriteString(ui.SectionHeader(fmt.Sprintf("Memory Pressure · Top %d processes by page fault rate", cfg.topK)))
 	if pfErr != nil {
 		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("Page fault tracker unavailable: %v", pfErr)))
 	} else {
-		costLimit := max(cfg.topK*2, cfg.topK)
-		costRows := report.CPUCostRows(filteredRows, costLimit)
+		costRows := report.CPUCostRows(filteredRows, cfg.topK)
 		if len(costRows) == 0 {
 			fmt.Fprintln(&buf, ui.C(ui.Dim, "No page faults recorded in this window"))
 		} else {

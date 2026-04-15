@@ -391,28 +391,37 @@ func sortFocusProcs(diag string, procs []ProcMetrics) {
 	})
 }
 
-// FocusSummary returns a short explanation string for the status line.
+// FocusSummary returns a short key-metric explanation for the Focus section.
+// Each diagnosis leads with its most critical signal.
 func FocusSummary(row ProcMetrics) string {
 	switch row.Diagnosis {
+	case "OOM risk – memory growth":
+		return fmt.Sprintf("RSS %.1f GB (growing), %s faults/sec",
+			row.RSSMB/1024.0, fmtFloat(row.FaultsPerSec))
 	case "Mem-thrashing":
-		return fmt.Sprintf("%.0f faults/sec, %.1f%% CPU, preempted %dx",
-			row.FaultsPerSec, row.CPUPercent, row.Preempted)
+		return fmt.Sprintf("%s faults/sec, cost %.2f ms/fault, %.1f%% CPU",
+			fmtFloat(row.FaultsPerSec), row.CPUCostPerFault, row.CPUPercent)
 	case "Starved":
 		return fmt.Sprintf("preempted %dx, only %.1f%% CPU",
 			row.Preempted, row.CPUPercent)
 	case "Noisy neighbor":
-		return fmt.Sprintf("steals CPU %dx, running at %.1f%%",
+		return fmt.Sprintf("preempts others %dx, %.1f%% CPU",
 			row.PreemptsOthers, row.CPUPercent)
 	case "CPU-bound":
-		return fmt.Sprintf("%.1f%% CPU, faults/sec %.0f",
-			row.CPUPercent, row.FaultsPerSec)
-	case "OOM risk – memory growth":
-		return fmt.Sprintf("OOM risk – %.1f GB RSS, %.0f faults/sec",
-			row.RSSMB/1024.0, row.FaultsPerSec)
+		return fmt.Sprintf("%.1f%% core, %.1f%% system CPU, %s faults/sec",
+			row.CoreCPUPercent, row.CPUPercent, fmtFloat(row.FaultsPerSec))
 	default:
-		return fmt.Sprintf("%.1f%% CPU, %.0f faults/sec",
-			row.CPUPercent, row.FaultsPerSec)
+		return fmt.Sprintf("%.1f%% CPU, %s faults/sec",
+			row.CPUPercent, fmtFloat(row.FaultsPerSec))
 	}
+}
+
+// fmtFloat formats a float with no decimals for >=10, one decimal otherwise.
+func fmtFloat(v float64) string {
+	if v >= 10 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return fmt.Sprintf("%.1f", v)
 }
 
 var totalMemOnce sync.Once

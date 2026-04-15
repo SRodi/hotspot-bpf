@@ -240,10 +240,11 @@ func TestFocusSummary(t *testing.T) {
 		row      ProcMetrics
 		expected string
 	}{
-		{"thrash", ProcMetrics{Diagnosis: "Mem-thrashing", FaultsPerSec: 1200, CPUPercent: 4, Preempted: 3}, "faults/sec"},
+		{"thrash", ProcMetrics{Diagnosis: "Mem-thrashing", FaultsPerSec: 1200, CPUCostPerFault: 0.3, CPUPercent: 4, Preempted: 3}, "faults/sec"},
 		{"starved", ProcMetrics{Diagnosis: "Starved", Preempted: 200, CPUPercent: 2}, "preempted"},
-		{"neighbor", ProcMetrics{Diagnosis: "Noisy neighbor", PreemptsOthers: 50, CPUPercent: 40}, "steals"},
-		{"cpu", ProcMetrics{Diagnosis: "CPU-bound", CPUPercent: 70, FaultsPerSec: 12}, "CPU"},
+		{"neighbor", ProcMetrics{Diagnosis: "Noisy neighbor", PreemptsOthers: 50, CPUPercent: 40}, "preempts others"},
+		{"cpu", ProcMetrics{Diagnosis: "CPU-bound", CoreCPUPercent: 100, CPUPercent: 5, FaultsPerSec: 0}, "core"},
+		{"oom", ProcMetrics{Diagnosis: "OOM risk – memory growth", RSSMB: 2048, FaultsPerSec: 500}, "RSS"},
 		{"default", ProcMetrics{Diagnosis: "OK", CPUPercent: 3, FaultsPerSec: 1}, "faults/sec"},
 	}
 
