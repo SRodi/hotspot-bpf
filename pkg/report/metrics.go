@@ -277,7 +277,8 @@ func CPUUsageRows(rows []ProcMetrics, topK int) []ProcMetrics {
 	return candidates
 }
 
-// CPUCostRows orders processes by CPU cost per fault to spotlight memory pressure.
+// CPUCostRows orders processes by fault rate (highest first) to spotlight memory pressure.
+// Tiebreaker: higher CPU cost per fault ranks first.
 func CPUCostRows(rows []ProcMetrics, topK int) []ProcMetrics {
 	candidates := make([]ProcMetrics, 0, len(rows))
 	for _, row := range rows {
@@ -287,10 +288,10 @@ func CPUCostRows(rows []ProcMetrics, topK int) []ProcMetrics {
 		candidates = append(candidates, row)
 	}
 	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].CPUCostPerFault == candidates[j].CPUCostPerFault {
+		if candidates[i].FaultsPerSec != candidates[j].FaultsPerSec {
 			return candidates[i].FaultsPerSec > candidates[j].FaultsPerSec
 		}
-		return candidates[i].CPUCostPerFault < candidates[j].CPUCostPerFault
+		return candidates[i].CPUCostPerFault > candidates[j].CPUCostPerFault
 	})
 	if topK > 0 && len(candidates) > topK {
 		candidates = candidates[:topK]
@@ -298,7 +299,8 @@ func CPUCostRows(rows []ProcMetrics, topK int) []ProcMetrics {
 	return candidates
 }
 
-// FilterContentionRows removes contention pairs hidden by filters and limits rows.
+// FilterContentionRows removes contention pairs hidden by filters, sorts by
+// preemption count (highest first), and limits to topK rows.
 func FilterContentionRows(entries []types.ContentionStat, cfg FilterConfig, procIndex map[uint32]ProcMetrics, topK int) []types.ContentionStat {
 	if len(entries) == 0 {
 		return nil
@@ -323,6 +325,7 @@ func FilterContentionRows(entries []types.ContentionStat, cfg FilterConfig, proc
 		}
 		rows = append(rows, entry)
 	}
+	sort.Slice(rows, func(i, j int) bool { return rows[i].Count > rows[j].Count })
 	if topK > 0 && len(rows) > topK {
 		rows = rows[:topK]
 	}
