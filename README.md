@@ -6,7 +6,7 @@ hotspot-bpf correlates CPU time, scheduler contention, page-fault pressure, and 
 
 > Two small eBPF programs. One Go binary. Zero dependencies at runtime.
 
-![hotspot-bpf detecting an OOM-risk memory leak in real time](static/hotspot-oom.png)
+![hotspot-bpf detecting an OOM-risk memory leak in real time](static/demo.gif)
 
 ---
 
@@ -277,14 +277,6 @@ EOF
 | Noisy neighbor | Normal-priority aggressor pinned with victim | High preempts-others | 1 tick (5s) |
 | Mem-thrashing | Python madvise loop | High fault rate, costly faults | 1 tick (5s) |
 | OOM risk | Python memory leak | Growing RSS + high faults | 2–3 ticks |
-
----
-
-## Screenshots
-
-| OOM risk detection | Noisy neighbor / Starved | Mem-thrashing |
-|:------------------:|:------------------------:|:-------------:|
-| ![OOM](static/hotspot-oom.png) | ![Noisy](static/hotspot-noisy-neighbour.png) | ![Thrash](static/hotspot.png) |
 
 ---
 
