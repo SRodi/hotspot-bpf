@@ -1,3 +1,17 @@
+// hotspot-bpf main package — the CLI entry point.
+//
+// Initializes eBPF collectors for CPU and memory, then runs a ticker loop
+// that follows this lifecycle each tick:
+//
+//   1. Snapshot: read BPF maps (cpu_stats, contention, page_faults)
+//   2. Merge:    combine all stats into per-PID ProcMetrics rows
+//   3. Classify: assign a diagnosis to each process (OK, Starved, OOM risk, etc.)
+//   4. Render:   write the TUI tables to an alternate terminal buffer
+//   5. Reset:    clear all BPF maps for the next sampling window
+//
+// The reset-after-render pattern means all metrics are windowed — they reflect
+// only the activity since the previous tick, not cumulative totals.
+
 //go:build linux
 
 package main

@@ -1,15 +1,33 @@
+// cpu_hotspot.c — eBPF program for CPU usage and scheduler contention tracking.
+//
+// Attaches to the sched/sched_switch tracepoint, which fires every time the
+// kernel scheduler moves a CPU from one task to another. On each switch we:
+//
+//  1. Record a victim→aggressor contention pair (prev_pid preempted by next_pid)
+//     in the cpu_contention map. The key is a packed u64: (victim<<32 | aggressor).
+//
+//  2. Accumulate nanosecond-accurate CPU time for the outgoing PID by computing
+//     the delta between the current timestamp and the last switch timestamp
+//     stored in the per-CPU cpu_state array.
+//
+//  3. Snapshot the process name (comm) and cgroup leaf name for display in the TUI.
+//
+// Maps are read and cleared by the Go collector (pkg/collector/cpu) each tick.
+
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <stdbool.h>
 
-// State per-CPU: last pid + ts
+// Per-CPU scratch space: tracks which PID was last running and when.
+// Using a PERCPU_ARRAY with a single key avoids lock contention.
 struct cpu_state {
 	u32 pid;
 	u64 ts;
 };
 
+// Per-PID cumulative CPU time + metadata for the current sampling window.
 struct pid_stat {
 	u64 cpu_time_ns;
 	char comm[16];
@@ -30,6 +48,8 @@ struct {
 	__type(value, struct pid_stat);
 } pid_stats SEC(".maps");
 
+// Contention map: key = (victim_pid << 32 | aggressor_pid), value = count.
+// Records how many times aggressor preempted victim within the window.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 2048);
@@ -41,6 +61,7 @@ struct {
 #define bpf_get_current_task_btf() bpf_get_current_task()
 #endif
 
+// write_placeholder fills dst with "n/a" when cgroup resolution fails.
 static __always_inline void write_placeholder(char *dst, size_t len) {
 	if (!dst || len == 0)
 		return;
@@ -53,6 +74,9 @@ static __always_inline void write_placeholder(char *dst, size_t len) {
 		dst[2] = 'a';
 }
 
+// snapshot_cgroup reads the leaf cgroup name for the current task via
+// task->cgroups->dfl_cgrp->kn->name. Falls back to the parent kernfs node
+// if the leaf name is empty. This is best-effort and not a full path.
 static __always_inline bool snapshot_cgroup(char *dst, size_t len) {
 	if (!dst || len == 0)
 		return false;
@@ -96,6 +120,9 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 	u32 victim = ctx->prev_pid;
 	u32 aggressor = ctx->next_pid;
 
+	// Track contention: when a non-idle task is switched out in favour of
+	// another non-idle task, record the pair so we can identify which
+	// processes are stealing CPU time from others.
 	if (victim != 0 && aggressor != 0) {
 		u64 pair = ((u64)victim << 32) | aggressor;
 		u64 *cnt = bpf_map_lookup_elem(&cpu_contention, &pair);

@@ -1,12 +1,28 @@
+// memory_faults.c — eBPF program for page fault tracking with in-kernel RSS capture.
+//
+// Attaches as a kprobe on handle_mm_fault, which is the kernel's unified entry
+// point for both minor and major page faults. Every time a process triggers a
+// fault, we:
+//
+//  1. Increment a per-PID fault counter in the page_faults map.
+//  2. Read the process's current RSS directly from task->mm->rss_stat[].count
+//     (the base counter of the percpu_counter). This is approximate — it omits
+//     per-CPU deltas — but accurate enough for trend-based OOM classification.
+//  3. Snapshot the cgroup leaf name (best-effort, same as cpu_hotspot.c).
+//
+// Maps are read and cleared by the Go collector (pkg/collector/memory) each tick.
+
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
 #include <bpf/bpf_helpers.h>
 #include <bpf/bpf_tracing.h>
 #include <stdbool.h>
 
+// Per-PID fault statistics for the current sampling window.
+// Layout must match the Go faultStat struct in collector_linux.go exactly.
 struct fault_stat {
-    u64 faults;
-    u64 rss_pages;
+    u64 faults;     // total page faults since last reset
+    u64 rss_pages;  // RSS in pages, read from mm->rss_stat at fault time
     char cgroup[64];
 };
 
@@ -64,6 +80,10 @@ static __always_inline bool snapshot_cgroup(char *dst, size_t len) {
     return false;
 }
 
+// read_rss_pages reads the approximate RSS (in pages) from the task's mm_struct.
+// Sums file-backed + anonymous + shared-memory pages. The percpu_counter .count
+// field is the base counter; per-CPU deltas are not included (off by at most
+// batch * num_cpus pages, typically a few MB).
 static __always_inline u64 read_rss_pages(struct task_struct *task) {
     struct mm_struct *mm = BPF_CORE_READ(task, mm);
     if (!mm)

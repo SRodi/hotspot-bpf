@@ -1,3 +1,6 @@
+// Package types defines shared data-transfer structs used between eBPF
+// collectors, the report/metrics engine, and the TUI renderer.
+// These types are intentionally simple and carry no business logic.
 package types
 
 // DefaultTopK controls how many top processes we display per resource category.

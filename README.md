@@ -70,9 +70,14 @@ PID     COMM        RSS(MB)  Faults/sec  CPU Cost/Fault (ms)  Diagnosis
 | File | Purpose |
 |------|---------|
 |bpf/cpu_hotspot.c | Tracepoint for sched/sched_switch → CPU time + contention map|
-|bpf/memory_faults.c | Kprobe on handle_mm_fault → page faults per PID|
+|bpf/memory_faults.c | Kprobe on handle_mm_fault → page faults + in-kernel RSS per PID|
 |pkg/collector/* | Go CO-RE wrappers (generated via bpf2go)|
+|pkg/report | Merges stats, classifies processes, tracks RSS trends|
 |cmd/hotspot | TUI: focus banner + CPU table + contention + fault efficiency|
+
+For detailed design and component diagrams, see **[docs/architecture.md](docs/architecture.md)**.
+
+For a complete explanation of each diagnosis label (Focus Reason), see **[docs/diagnosis-guide.md](docs/diagnosis-guide.md)**.
 
 ## Requirements (Linux only)
 

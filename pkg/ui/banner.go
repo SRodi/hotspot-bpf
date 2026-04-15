@@ -1,3 +1,5 @@
+// Package ui provides terminal rendering helpers for the hotspot-bpf TUI,
+// including the ANSI-colored ASCII art banner.
 package ui
 
 import "strings"

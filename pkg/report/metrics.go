@@ -1,3 +1,18 @@
+// Package report merges raw eBPF collector stats into per-PID process metrics
+// and classifies each process with a human-readable diagnosis.
+//
+// The classification engine (classifyProc) applies a priority-ordered set of
+// heuristic rules. Diagnosis precedence (highest to lowest):
+//
+//   1. OOM risk – memory growth  (RSS growing + large + high fault rate)
+//   2. CPU-bound                  (high CPU, no faults, no preemption)
+//   3. Mem-thrashing              (high fault rate + costly faults)
+//   4. Starved                    (frequently preempted, low CPU)
+//   5. Noisy neighbor             (frequently preempts others, high CPU)
+//   6. OK                         (none of the above)
+//
+// A process is evaluated top-to-bottom and receives the first matching label.
+// All metrics are windowed: they reflect one sampling interval, not cumulative.
 package report
 
 import (
@@ -374,13 +389,16 @@ func getTotalMem() uint64 {
 	return totalMem
 }
 
+// classifyProc assigns a diagnosis label to a process based on its metrics.
+// Rules are evaluated in priority order — the first match wins.
+// See package doc for the full precedence table.
 func classifyProc(row *ProcMetrics) string {
-	costlyFaults := row.CPUCostPerFault > 0.1 && row.Faults > 0
-	veryCostlyFaults := row.CPUCostPerFault > 0.5 && row.Faults > 0
+	costlyFaults := row.CPUCostPerFault > 0.1 && row.Faults > 0     // faults cost >0.1ms CPU each
+	veryCostlyFaults := row.CPUCostPerFault > 0.5 && row.Faults > 0 // faults cost >0.5ms CPU each
 
 	rssRatio := row.RSSRatio
-	bigProcess := row.RSSMB >= 500       // >= 500MB
-	highRatio := rssRatio >= 0.10        // >= 10% of RAM
+	bigProcess := row.RSSMB >= 500        // >= 500 MB absolute RSS
+	highRatio := rssRatio >= 0.10         // >= 10% of total system RAM
 	manyFaults := row.FaultsPerSec >= 200 // sustained page-fault pressure
 
 	// --- highest priority: OOM-ish behavior ---
@@ -441,6 +459,9 @@ func isKernelThread(row ProcMetrics) bool {
 	return false
 }
 
+// diagnosisSeverity maps a diagnosis label to a numeric priority (0–5).
+// Used by SelectFocusCandidate to pick the most critical process for the
+// Focus banner. Higher severity wins.
 func diagnosisSeverity(label string) int {
 	switch label {
 	case "OOM risk – memory growth":

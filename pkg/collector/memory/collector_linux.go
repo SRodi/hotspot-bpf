@@ -112,8 +112,10 @@ func (c *Collector) Reset() error {
 	return nil
 }
 
+// faultStat mirrors the BPF struct fault_stat in memory_faults.c.
+// Field order and sizes MUST match exactly for correct map iteration.
 type faultStat struct {
-	Faults   uint64
-	RSSPages uint64
-	Cgroup   [64]byte
+	Faults   uint64   // page fault count in the current window
+	RSSPages uint64   // approximate RSS in pages (from BPF mm->rss_stat)
+	Cgroup   [64]byte // best-effort cgroup leaf name
 }

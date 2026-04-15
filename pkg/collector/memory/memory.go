@@ -1,3 +1,8 @@
+// Package memory provides helpers for reading process memory metrics from /proc.
+//
+// These functions serve as a FALLBACK for processes that have no BPF-sourced RSS
+// (e.g., PIDs that appear only in CPU stats without page faults). The primary RSS
+// source is the BPF fault handler which reads mm->rss_stat directly in the kernel.
 package memory
 
 import (
