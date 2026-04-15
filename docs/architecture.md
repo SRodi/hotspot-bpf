@@ -11,7 +11,7 @@ component integrates with the others.
 ```mermaid
 graph LR
     subgraph Kernel
-        TP["sched/sched_switch<br/>tracepoint"]
+        TP["tp_btf/sched_switch<br/>(BTF raw tracepoint)"]
         KP["handle_mm_fault<br/>kprobe"]
     end
 
@@ -21,9 +21,9 @@ graph LR
     end
 
     subgraph BPF Maps
-        PS["pid_stats<br/>(per-PID CPU time)"]
-        CC["cpu_contention<br/>(victim→aggressor pairs)"]
-        PF["page_faults<br/>(per-PID faults + RSS)"]
+        PS["pid_stats<br/>(per-TGID CPU time)"]
+        CC["cpu_contention<br/>(TGID victim→aggressor)"]
+        PF["page_faults<br/>(per-TGID faults + RSS)"]
     end
 
     subgraph Go Userspace
@@ -182,7 +182,12 @@ classification.
 
 ## Limitations and Assumptions
 
-- **Linux only**: requires kernel 5.8+ with BTF at `/sys/kernel/btf/vmlinux`.
+- **Linux only**: requires kernel ≥5.5 with BTF support (`CONFIG_DEBUG_INFO_BTF=y`,
+  `/sys/kernel/btf/vmlinux` must exist). The CPU collector uses `tp_btf/sched_switch`
+  (BTF-powered raw tracepoint) for direct task_struct access.
+- **TGID-based keying**: both CPU and memory BPF programs key their maps by TGID
+  (process ID), ensuring multi-threaded processes are correctly aggregated. Thread-level
+  granularity is intentionally not exposed.
 - **Privileged**: must run as root (or with `CAP_BPF` + `CAP_PERFMON`).
 - **kprobe dependency**: `handle_mm_fault` is not a stable ABI — kernel
   updates could rename or refactor it (unlikely but possible).

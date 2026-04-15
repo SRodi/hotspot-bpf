@@ -13,9 +13,9 @@ import (
 )
 
 type hotspot_bpfCpuState struct {
-	Pid uint32
-	_   [4]byte
-	Ts  uint64
+	Tgid uint32
+	_    [4]byte
+	Ts   uint64
 }
 
 type hotspot_bpfPidStat struct {

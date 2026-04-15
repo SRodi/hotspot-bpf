@@ -535,3 +535,95 @@ func TestClassifyProcWithCustomThresholds(t *testing.T) {
 }
 
 func boolPtr(v bool) *bool { return &v }
+
+// TestBuildProcMetricsMultiThreadedMerge verifies that when the CPU and memory
+// collectors both emit data keyed by the same TGID (as they now do after the
+// PID/TID fix), the metrics engine correctly merges them into a single row.
+// Previously, CPU was keyed by TID and memory by TGID, causing multi-threaded
+// processes to have disjoint rows.
+func TestBuildProcMetricsMultiThreadedMerge(t *testing.T) {
+	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
+	rssBytesForPIDs = func(pids []int) map[int]uint64 { return nil }
+
+	interval := time.Second
+	tgid := uint32(1000) // shared process ID
+
+	// Both collectors report data for the same TGID, as the BPF programs now
+	// key by TGID. CPU time is already aggregated across threads at BPF level.
+	cpuStats := []types.CPUStat{
+		{PID: tgid, Comm: "java", Cgroup: "/kubepods", Ns: uint64(200 * time.Millisecond)},
+	}
+	pageFaults := []types.PageFaultStat{
+		{PID: tgid, Comm: "java", Cgroup: "/kubepods", Faults: 500, FaultsPerSec: 100, RSSBytes: 1 << 30},
+	}
+
+	rows, index := BuildProcMetrics(cpuStats, pageFaults, nil, interval, nil, defaultTh)
+
+	// Must produce exactly one row for the TGID.
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 merged row for TGID %d, got %d rows", tgid, len(rows))
+	}
+
+	merged, ok := index[tgid]
+	if !ok {
+		t.Fatalf("missing row for TGID %d in index", tgid)
+	}
+
+	// Verify CPU and memory data coexist in the same row.
+	if merged.CPUNs != uint64(200*time.Millisecond) {
+		t.Fatalf("CPU time not merged: got %d ns", merged.CPUNs)
+	}
+	if merged.Faults != 500 {
+		t.Fatalf("page faults not merged: got %d", merged.Faults)
+	}
+	if merged.FaultsPerSec != 100 {
+		t.Fatalf("faults/sec not merged: got %.1f", merged.FaultsPerSec)
+	}
+	expectedRSSMB := float64(1<<30) / (1024 * 1024)
+	if math.Abs(merged.RSSMB-expectedRSSMB) > 1 {
+		t.Fatalf("RSS not merged: got %.1f MB, want ~%.1f MB", merged.RSSMB, expectedRSSMB)
+	}
+	if merged.Comm != "java" {
+		t.Fatalf("comm mismatch: got %q", merged.Comm)
+	}
+}
+
+// TestBuildProcMetricsContentionMerge verifies that contention data (also TGID-keyed
+// after the fix) merges correctly with CPU and memory data.
+func TestBuildProcMetricsContentionMerge(t *testing.T) {
+	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
+	rssBytesForPIDs = func(pids []int) map[int]uint64 { return nil }
+
+	interval := time.Second
+	victimTGID := uint32(2000)
+	aggressorTGID := uint32(3000)
+
+	cpuStats := []types.CPUStat{
+		{PID: victimTGID, Comm: "victim-app", Cgroup: "/pods", Ns: uint64(10 * time.Millisecond)},
+		{PID: aggressorTGID, Comm: "aggressor-app", Cgroup: "/pods", Ns: uint64(400 * time.Millisecond)},
+	}
+	pageFaults := []types.PageFaultStat{
+		{PID: victimTGID, Comm: "victim-app", Faults: 50, FaultsPerSec: 10},
+	}
+	contention := []types.ContentionStat{
+		{VictimPID: victimTGID, VictimComm: "victim-app", AggressorPID: aggressorTGID, AggressorComm: "aggressor-app", Count: 200},
+	}
+
+	_, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil, defaultTh)
+
+	victim := index[victimTGID]
+	if victim.Preempted != 200 {
+		t.Fatalf("victim preemptions not merged: got %d", victim.Preempted)
+	}
+	if victim.Faults != 50 {
+		t.Fatalf("victim faults not merged: got %d", victim.Faults)
+	}
+	if victim.CPUNs != uint64(10*time.Millisecond) {
+		t.Fatalf("victim CPU not merged: got %d", victim.CPUNs)
+	}
+
+	aggressor := index[aggressorTGID]
+	if aggressor.PreemptsOthers != 200 {
+		t.Fatalf("aggressor preempts-others not merged: got %d", aggressor.PreemptsOthers)
+	}
+}

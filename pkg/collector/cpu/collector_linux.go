@@ -14,6 +14,9 @@ import (
 )
 
 // Collector owns the eBPF programs and maps that record CPU hotspots.
+// The BPF program uses tp_btf/sched_switch (BTF-powered raw tracepoint) to get
+// direct access to both prev and next task_struct pointers, enabling TGID-based
+// keying that matches the memory collector's process-level granularity.
 type Collector struct {
 	objs hotspot_bpfObjects
 	tp   link.Link
@@ -21,17 +24,20 @@ type Collector struct {
 
 const resetSweepRetries = 3
 
-// NewCollector loads the compiled eBPF program and attaches it to sched/sched_switch.
+// NewCollector loads the compiled eBPF program and attaches it via tp_btf/sched_switch.
+// This requires a kernel with BTF support (≥5.5, CONFIG_DEBUG_INFO_BTF=y).
 func NewCollector() (*Collector, error) {
 	var objs hotspot_bpfObjects
 	if err := loadHotspot_bpfObjects(&objs, nil); err != nil {
 		return nil, fmt.Errorf("loading bpf objects: %w", err)
 	}
 
-	tp, err := link.Tracepoint("sched", "sched_switch", objs.HandleSchedSwitch, nil)
+	tp, err := link.AttachTracing(link.TracingOptions{
+		Program: objs.HandleSchedSwitch,
+	})
 	if err != nil {
 		objs.Close()
-		return nil, fmt.Errorf("attaching tracepoint: %w", err)
+		return nil, fmt.Errorf("attaching tp_btf/sched_switch: %w", err)
 	}
 
 	return &Collector{objs: objs, tp: tp}, nil
@@ -46,7 +52,9 @@ func (c *Collector) Close() error {
 	return errors.Join(err, c.objs.Close())
 }
 
-// Snapshot returns the top N CPU hogs gathered since the previous reset.
+// Snapshot returns per-process (TGID) CPU stats gathered since the previous reset.
+// The BPF program aggregates CPU time across all threads of the same process,
+// so each entry represents total process CPU time, not individual thread time.
 func (c *Collector) Snapshot(limit int) ([]types.CPUStat, error) {
 	stats := make([]types.CPUStat, 0, limit)
 
@@ -122,6 +130,8 @@ func (c *Collector) Reset() error {
 }
 
 // Contention returns the busiest victim/aggressor pairs observed since the last reset.
+// Pairs are keyed by TGID (process-level), so intra-process thread switches are
+// already filtered out at the BPF level.
 func (c *Collector) Contention(limit int) ([]types.ContentionStat, error) {
 	if c.objs.CpuContention == nil {
 		return nil, fmt.Errorf("contention map is unavailable; regenerate eBPF objects")
@@ -160,6 +170,9 @@ func (c *Collector) Contention(limit int) ([]types.ContentionStat, error) {
 	return stats, nil
 }
 
+// pidStat mirrors the BPF struct pid_stat in cpu_hotspot.c.
+// Field order and sizes MUST match exactly for correct map iteration.
+// Keyed by TGID (process ID), so multi-threaded processes have one entry.
 type pidStat struct {
 	CPUTimeNS uint64
 	Comm      [16]byte

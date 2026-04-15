@@ -1,18 +1,25 @@
 // cpu_hotspot.c — eBPF program for CPU usage and scheduler contention tracking.
 //
-// Attaches to the sched/sched_switch tracepoint, which fires every time the
-// kernel scheduler moves a CPU from one task to another. On each switch we:
+// Uses a BTF-powered raw tracepoint (tp_btf/sched_switch) which provides direct
+// access to both the outgoing and incoming task_struct pointers. This lets us
+// read each task's TGID (thread group ID = process ID) without any lookup map,
+// solving the PID/TID mismatch that previously caused CPU data to be keyed by
+// thread ID while memory data was keyed by process ID.
 //
-//  1. Record a victim→aggressor contention pair (prev_pid preempted by next_pid)
-//     in the cpu_contention map. The key is a packed u64: (victim<<32 | aggressor).
+// On every context switch we:
 //
-//  2. Accumulate nanosecond-accurate CPU time for the outgoing PID by computing
-//     the delta between the current timestamp and the last switch timestamp
-//     stored in the per-CPU cpu_state array.
+//  1. Record a victim→aggressor contention pair keyed by TGID (process-level).
+//     Intra-process thread switches (same TGID) are ignored since they are not
+//     true contention.
+//
+//  2. Accumulate nanosecond-accurate CPU time for the outgoing process (TGID).
+//     Multiple threads of the same process contribute to a single pid_stats entry.
 //
 //  3. Snapshot the process name (comm) and cgroup leaf name for display in the TUI.
 //
 // Maps are read and cleared by the Go collector (pkg/collector/cpu) each tick.
+//
+// Requires: kernel ≥5.5 with BTF support (CONFIG_DEBUG_INFO_BTF=y).
 
 #include "vmlinux.h"
 #include <bpf/bpf_core_read.h>
@@ -20,14 +27,17 @@
 #include <bpf/bpf_tracing.h>
 #include <stdbool.h>
 
-// Per-CPU scratch space: tracks which PID was last running and when.
-// Using a PERCPU_ARRAY with a single key avoids lock contention.
+// Per-CPU scratch space: tracks which process (TGID) was last running and when.
+// Using a PERCPU_ARRAY with a single key avoids lock contention between CPUs.
 struct cpu_state {
-	u32 pid;
-	u64 ts;
+	u32 tgid; // TGID of the task that was last running on this CPU
+	u64 ts;   // ktime_ns timestamp when that task was switched in
 };
 
-// Per-PID cumulative CPU time + metadata for the current sampling window.
+// Per-process (TGID) cumulative CPU time + metadata for the current sampling
+// window. When multiple threads of the same process run on different cores,
+// their CPU time is aggregated into a single entry keyed by the shared TGID.
+//
 // cpu_id is the last CPU core observed at switch-out (not necessarily stable
 // for migratory workloads — it's a snapshot, not a primary-core assignment).
 struct pid_stat {
@@ -52,8 +62,10 @@ struct {
 	__type(value, struct pid_stat);
 } pid_stats SEC(".maps");
 
-// Contention map: key = (victim_pid << 32 | aggressor_pid), value = count.
-// Records how many times aggressor preempted victim within the window.
+// Contention map: key = (victim_tgid << 32 | aggressor_tgid), value = count.
+// Records how many times one process's threads preempted another process's
+// threads within the window. Keyed by TGID so intra-process thread switches
+// are filtered out.
 struct {
 	__uint(type, BPF_MAP_TYPE_HASH);
 	__uint(max_entries, 2048);
@@ -112,8 +124,18 @@ static __always_inline bool snapshot_cgroup(char *dst, size_t len) {
 	return false;
 }
 
-SEC("tracepoint/sched/sched_switch")
-int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
+// handle_sched_switch runs on every CPU context switch via tp_btf/sched_switch.
+//
+// The BPF_PROG macro unpacks the raw tracepoint arguments into typed params:
+//   - preempt: whether this was a preemptive switch
+//   - prev:    task_struct of the outgoing (descheduled) task
+//   - next:    task_struct of the incoming (about to run) task
+//
+// Having direct task_struct access lets us read each task's tgid field,
+// ensuring all maps are keyed by process ID (TGID) rather than thread ID.
+SEC("tp_btf/sched_switch")
+int BPF_PROG(handle_sched_switch, bool preempt,
+	     struct task_struct *prev, struct task_struct *next) {
 	u64 ts = bpf_ktime_get_ns();
 	u32 key = 0; // index into per-CPU array always 0
 
@@ -121,14 +143,16 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 	if (!st)
 		return 0;
 
-	u32 victim = ctx->prev_pid;
-	u32 aggressor = ctx->next_pid;
+	// Read TGIDs directly from task_struct — guaranteed correct for both
+	// single-threaded and multi-threaded processes.
+	u32 prev_tgid = BPF_CORE_READ(prev, tgid);
+	u32 next_tgid = BPF_CORE_READ(next, tgid);
 
-	// Track contention: when a non-idle task is switched out in favour of
-	// another non-idle task, record the pair so we can identify which
-	// processes are stealing CPU time from others.
-	if (victim != 0 && aggressor != 0) {
-		u64 pair = ((u64)victim << 32) | aggressor;
+	// Track contention: when a non-idle process is switched out in favour of
+	// a different non-idle process, record the pair. Intra-process switches
+	// (same TGID, different threads) are NOT contention and are skipped.
+	if (prev_tgid != 0 && next_tgid != 0 && prev_tgid != next_tgid) {
+		u64 pair = ((u64)prev_tgid << 32) | next_tgid;
 		u64 *cnt = bpf_map_lookup_elem(&cpu_contention, &pair);
 		if (cnt) {
 			(*cnt)++;
@@ -138,13 +162,14 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 		}
 	}
 
-	// If previous PID was non-zero, update its CPU time
-	if (st->pid != 0) {
+	// Accumulate CPU time for the process that was running on this core.
+	// st->tgid was stored when this task was previously switched IN.
+	if (st->tgid != 0) {
 		u64 delta = ts - st->ts;
-		u32 pid = st->pid;
+		u32 tgid = st->tgid;
 		u32 cpu = bpf_get_smp_processor_id();
 
-		struct pid_stat *ps = bpf_map_lookup_elem(&pid_stats, &pid);
+		struct pid_stat *ps = bpf_map_lookup_elem(&pid_stats, &tgid);
 		if (!ps) {
 			struct pid_stat new_ps = {};
 			new_ps.cpu_time_ns = delta;
@@ -152,7 +177,7 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 			bpf_get_current_comm(new_ps.comm, sizeof(new_ps.comm));
 			if (!snapshot_cgroup(new_ps.cgroup, sizeof(new_ps.cgroup)))
 				write_placeholder(new_ps.cgroup, sizeof(new_ps.cgroup));
-			bpf_map_update_elem(&pid_stats, &pid, &new_ps, BPF_ANY);
+			bpf_map_update_elem(&pid_stats, &tgid, &new_ps, BPF_ANY);
 		} else {
 			ps->cpu_time_ns += delta;
 			ps->cpu_id = cpu;
@@ -163,9 +188,9 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 		}
 	}
 
-	// Update for the next PID
-	u32 next_pid = ctx->next_pid;
-	st->pid = next_pid;
+	// Record the incoming process so we can attribute its CPU time on the
+	// next switch-out from this core.
+	st->tgid = next_tgid;
 	st->ts = ts;
 
 	return 0;
