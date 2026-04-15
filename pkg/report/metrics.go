@@ -370,6 +370,8 @@ func isKernelThread(row ProcMetrics) bool {
 
 func diagnosisSeverity(label string) int {
 	switch label {
+	case "OOM risk – memory growth":
+		return 5
 	case "Mem-thrashing":
 		return 4
 	case "Starved":

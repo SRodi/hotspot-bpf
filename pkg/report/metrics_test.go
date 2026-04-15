@@ -184,6 +184,18 @@ func TestSelectFocusCandidate(t *testing.T) {
 		}
 	})
 
+	t.Run("oomRiskPreferred", func(t *testing.T) {
+		rows := []ProcMetrics{
+			{PID: 1, Diagnosis: "CPU-bound", CPUPercent: 80, FaultsPerSec: 0.5},
+			{PID: 2, Diagnosis: "Mem-thrashing", CPUPercent: 10, FaultsPerSec: 900},
+			{PID: 3, Diagnosis: "OOM risk – memory growth", CPUPercent: 2, FaultsPerSec: 500, RSSMB: 2048},
+		}
+		candidate := SelectFocusCandidate(rows)
+		if candidate == nil || candidate.PID != 3 {
+			t.Fatalf("expected OOM risk row as focus, got %+v", candidate)
+		}
+	})
+
 	t.Run("fallbackToMaxCPU", func(t *testing.T) {
 		rows := []ProcMetrics{
 			{PID: 10, Diagnosis: "OK", CPUPercent: 0.5, FaultsPerSec: 0.2},
@@ -277,11 +289,12 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 
 func TestDiagnosisSeverity(t *testing.T) {
 	labels := map[string]int{
-		"Mem-thrashing":  4,
-		"Starved":        3,
-		"Noisy neighbor": 2,
-		"CPU-bound":      1,
-		"OK":             0,
+		"OOM risk – memory growth": 5,
+		"Mem-thrashing":            4,
+		"Starved":                  3,
+		"Noisy neighbor":           2,
+		"CPU-bound":                1,
+		"OK":                       0,
 	}
 	for label, expected := range labels {
 		if got := diagnosisSeverity(label); got != expected {
