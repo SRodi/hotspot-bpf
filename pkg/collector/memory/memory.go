@@ -2,11 +2,14 @@ package memory
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // rssBytes returns the resident set size for a single PID.
@@ -31,9 +34,12 @@ func rssBytes(pid int) (uint64, error) {
 }
 
 // RSSBytesForPIDs returns a PID->RSS map for the provided set.
+// It retries once on transient /proc read failures to handle race conditions
+// where a process is briefly unavailable between BPF data collection and /proc reads.
 func RSSBytesForPIDs(pids []int) map[int]uint64 {
 	result := make(map[int]uint64, len(pids))
 	seen := make(map[int]struct{}, len(pids))
+	var retryPIDs []int
 	for _, pid := range pids {
 		if pid <= 0 {
 			continue
@@ -42,8 +48,22 @@ func RSSBytesForPIDs(pids []int) map[int]uint64 {
 			continue
 		}
 		seen[pid] = struct{}{}
-		if rss, err := rssBytes(pid); err == nil {
+		rss, err := rssBytes(pid)
+		if err == nil {
 			result[pid] = rss
+		} else if !errors.Is(err, os.ErrNotExist) {
+			retryPIDs = append(retryPIDs, pid)
+		}
+	}
+	if len(retryPIDs) > 0 {
+		time.Sleep(5 * time.Millisecond)
+		for _, pid := range retryPIDs {
+			rss, err := rssBytes(pid)
+			if err == nil {
+				result[pid] = rss
+			} else {
+				log.Printf("rss read failed for pid %d after retry: %v", pid, err)
+			}
 		}
 	}
 	return result
