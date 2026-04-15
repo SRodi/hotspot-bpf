@@ -8,8 +8,12 @@ import (
 	"time"
 
 	"github.com/srodi/hotspot-bpf/pkg/collector/memory"
+	"github.com/srodi/hotspot-bpf/pkg/config"
 	"github.com/srodi/hotspot-bpf/pkg/types"
 )
+
+// defaultTh is a shorthand for tests that don't need custom thresholds.
+var defaultTh = config.Default()
 
 func TestBuildProcMetricsMergesStats(t *testing.T) {
 	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
@@ -26,7 +30,7 @@ func TestBuildProcMetricsMergesStats(t *testing.T) {
 	pageFaults := []types.PageFaultStat{{PID: 123, Comm: "worker", Cgroup: "/kubepods", Faults: 25, FaultsPerSec: 25}}
 	contention := []types.ContentionStat{{VictimPID: 123, VictimComm: "worker", AggressorPID: 456, AggressorComm: "noisy", Count: 150}}
 
-	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil)
+	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil, defaultTh)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -84,7 +88,7 @@ func TestBuildProcMetricsDefaultsInterval(t *testing.T) {
 	cpuStats := []types.CPUStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Ns: cpuNs}}
 	pageFaults := []types.PageFaultStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Faults: 10}}
 
-	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, 0, nil)
+	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, 0, nil, defaultTh)
 	row := index[99]
 	if row.CPUMs != float64(cpuNs)/1e6 {
 		t.Fatalf("unexpected CPUMs: %.3f", row.CPUMs)
@@ -246,7 +250,7 @@ func TestClassifyProc(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			label := classifyProc(&tc.row)
+			label := classifyProc(&tc.row, defaultTh)
 			if label != tc.expected {
 				t.Fatalf("expected %s, got %s", tc.expected, label)
 			}
@@ -299,7 +303,7 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			label := classifyProc(&tc.row)
+			label := classifyProc(&tc.row, defaultTh)
 			if label != tc.want {
 				t.Fatalf("expected %s, got %s", tc.want, label)
 			}
@@ -370,7 +374,7 @@ func TestBuildProcMetricsBPFRSSPreferred(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 512 << 20},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil, defaultTh)
 	row, ok := index[42]
 	if !ok {
 		t.Fatal("missing row for pid 42")
@@ -392,7 +396,7 @@ func TestBuildProcMetricsFallbackToProcRSS(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 99, Comm: "app", Faults: 10, FaultsPerSec: 10, RSSBytes: 0},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil, defaultTh)
 	row := index[99]
 	if math.Abs(row.RSSMB-256) > 1e-3 {
 		t.Fatalf("expected /proc fallback RSS (256MB), got %.3f MB", row.RSSMB)
@@ -456,18 +460,44 @@ func TestBuildProcMetricsWithTracker(t *testing.T) {
 		pageFaults := []types.PageFaultStat{
 			{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: rssBytes},
 		}
-		_, _ = BuildProcMetrics(nil, pageFaults, nil, interval, tracker)
+		_, _ = BuildProcMetrics(nil, pageFaults, nil, interval, tracker, defaultTh)
 	}
 
 	// On the 3rd tick, the process should be classified as OOM risk
 	pageFaults := []types.PageFaultStat{
 		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 800 << 20},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, tracker)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, tracker, defaultTh)
 	row := index[42]
 	if row.Diagnosis != "OOM risk – memory growth" {
 		t.Fatalf("expected OOM risk with growing RSS, got %s (RSSMB=%.1f, RSSGrowing=%v)",
 			row.Diagnosis, row.RSSMB, row.RSSGrowing)
+	}
+}
+
+func TestClassifyProcWithCustomThresholds(t *testing.T) {
+	// With default thresholds, 200MB + 300 faults/sec + growing = OK (below 500MB)
+	row := ProcMetrics{RSSMB: 200, FaultsPerSec: 300, RSSGrowing: true, Faults: 1}
+	if label := classifyProc(&row, defaultTh); label != "OK" {
+		t.Fatalf("expected OK with defaults (200MB < 500MB), got %s", label)
+	}
+
+	// With lowered threshold, same process triggers OOM
+	custom := defaultTh
+	custom.OOM.RSSMB = 100
+	if label := classifyProc(&row, custom); label != "OOM risk – memory growth" {
+		t.Fatalf("expected OOM risk with lowered threshold, got %s", label)
+	}
+
+	// Raise starved preemption threshold: 150 preemptions should be OK
+	starvedRow := ProcMetrics{Preempted: 150, CPUPercent: 5}
+	if label := classifyProc(&starvedRow, defaultTh); label != "Starved" {
+		t.Fatalf("expected Starved with defaults, got %s", label)
+	}
+	custom2 := defaultTh
+	custom2.Starved.MinPreempted = 200
+	if label := classifyProc(&starvedRow, custom2); label != "OK" {
+		t.Fatalf("expected OK with raised starved threshold, got %s", label)
 	}
 }
 

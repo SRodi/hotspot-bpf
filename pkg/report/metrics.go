@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/srodi/hotspot-bpf/pkg/collector/memory"
+	"github.com/srodi/hotspot-bpf/pkg/config"
 	"github.com/srodi/hotspot-bpf/pkg/types"
 )
 
@@ -117,12 +118,14 @@ func (cfg FilterConfig) hideKernelEnabled() bool {
 // BuildProcMetrics merges raw collector stats into per-PID rows and returns both
 // a slice for table rendering and an index for quick lookups.
 // If rssTracker is non-nil, it records RSS and marks processes with growing RSS.
+// The thresholds parameter controls all classification gates.
 func BuildProcMetrics(
 	cpuStats []types.CPUStat,
 	pageFaults []types.PageFaultStat,
 	contention []types.ContentionStat,
 	interval time.Duration,
 	rssTracker *RSSTracker,
+	thresholds config.Thresholds,
 ) ([]ProcMetrics, map[uint32]ProcMetrics) {
 	// compute once
 	totalMemBytes, err := memory.TotalMemoryBytes()
@@ -217,7 +220,7 @@ func BuildProcMetrics(
 		}
 		rssTracker.Prune(activePIDs)
 		for _, row := range rows {
-			row.RSSGrowing = rssTracker.IsGrowing(row.PID, 10) // >=10MB net growth
+			row.RSSGrowing = rssTracker.IsGrowing(row.PID, thresholds.RSSTracker.MinDeltaMB)
 		}
 	}
 
@@ -231,7 +234,7 @@ func BuildProcMetrics(
 		}
 		row.RSSRatio = (row.RSSMB * 1024 * 1024) / float64(totalMemBytes)
 		row.CPUCostPerFault = cpuMsPerSec / (faultRate + 1)
-		row.Diagnosis = classifyProc(row)
+		row.Diagnosis = classifyProc(row, thresholds)
 		copy := *row
 		result = append(result, copy)
 		index[row.PID] = copy
@@ -392,14 +395,14 @@ func getTotalMem() uint64 {
 // classifyProc assigns a diagnosis label to a process based on its metrics.
 // Rules are evaluated in priority order — the first match wins.
 // See package doc for the full precedence table.
-func classifyProc(row *ProcMetrics) string {
-	costlyFaults := row.CPUCostPerFault > 0.1 && row.Faults > 0     // faults cost >0.1ms CPU each
-	veryCostlyFaults := row.CPUCostPerFault > 0.5 && row.Faults > 0 // faults cost >0.5ms CPU each
+func classifyProc(row *ProcMetrics, th config.Thresholds) string {
+	costlyFaults := row.CPUCostPerFault > th.MemThrashing.ModerateCostPerFault && row.Faults > 0
+	veryCostlyFaults := row.CPUCostPerFault > th.MemThrashing.SevereCostPerFault && row.Faults > 0
 
 	rssRatio := row.RSSRatio
-	bigProcess := row.RSSMB >= 500        // >= 500 MB absolute RSS
-	highRatio := rssRatio >= 0.10         // >= 10% of total system RAM
-	manyFaults := row.FaultsPerSec >= 200 // sustained page-fault pressure
+	bigProcess := row.RSSMB >= th.OOM.RSSMB
+	highRatio := rssRatio >= th.OOM.RSSRatio
+	manyFaults := row.FaultsPerSec >= th.OOM.FaultsPerSec
 
 	// --- highest priority: OOM-ish behavior ---
 	// Require RSS to be actively growing across ticks to avoid false positives
@@ -409,23 +412,29 @@ func classifyProc(row *ProcMetrics) string {
 	}
 
 	// CPU-bound
-	if row.CPUPercent > 50 && row.FaultsPerSec < 1 && row.Preempted == 0 {
+	if row.CPUPercent > th.CPUBound.CPUPercent &&
+		row.FaultsPerSec < th.CPUBound.MaxFaultsPerSec &&
+		row.Preempted <= th.CPUBound.MaxPreempted {
 		return "CPU-bound"
 	}
 
 	// Memory thrashing (expensive faults)
-	if row.FaultsPerSec > 1000 && veryCostlyFaults && row.CPUPercent < 20 {
+	if row.FaultsPerSec > th.MemThrashing.SevereFaultsPerSec &&
+		veryCostlyFaults &&
+		row.CPUPercent < th.MemThrashing.MaxCPUPercent {
 		return "Mem-thrashing"
 	}
-	if row.FaultsPerSec > 500 && costlyFaults && row.CPUPercent < 20 {
+	if row.FaultsPerSec > th.MemThrashing.ModerateFaultsPerSec &&
+		costlyFaults &&
+		row.CPUPercent < th.MemThrashing.MaxCPUPercent {
 		return "Mem-thrashing"
 	}
 
 	// Scheduler-based diagnoses
-	if row.Preempted > 100 && row.CPUPercent < 10 {
+	if row.Preempted > th.Starved.MinPreempted && row.CPUPercent < th.Starved.MaxCPUPercent {
 		return "Starved"
 	}
-	if row.PreemptsOthers > 100 && row.CPUPercent > 30 {
+	if row.PreemptsOthers > th.NoisyNeighbr.MinPreemptsOthers && row.CPUPercent > th.NoisyNeighbr.MinCPUPercent {
 		return "Noisy neighbor"
 	}
 

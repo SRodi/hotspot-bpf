@@ -4,6 +4,10 @@ hotspot-bpf classifies every monitored process with a **diagnosis label**
 displayed in the TUI's Focus banner and the Diagnosis column. This guide
 explains what each label means, what triggers it, and what to do about it.
 
+> **All thresholds are configurable.** Run `hotspot -generate-config` to
+> produce a commented YAML file with the defaults, then pass your customized
+> version with `-config thresholds.yaml`. See the README for details.
+
 ---
 
 ## Diagnosis Precedence

@@ -114,9 +114,30 @@ sudo go run ./cmd/hotspot -interval 5s -topk 5
 |Flag	|Description|
 |-------------|-------------------|
 |-interval 2s	| Faster sampling|
-|-topk 10	Show | more rows|
+|-topk 10	| Show more rows|
 |-hide-kernel=false	| Include kthreads|
 |-cgroup-filter pods.slice | Scope to workloads|
+|-config thresholds.yaml | Custom classification thresholds|
+|-generate-config | Print default config YAML and exit|
+
+### Custom Classification Thresholds
+
+All diagnosis thresholds are configurable via a YAML file. Generate the
+default configuration as a starting point:
+
+```sh
+sudo go run ./cmd/hotspot -generate-config > thresholds.yaml
+```
+
+Edit the file to tune thresholds for your environment, then pass it at runtime:
+
+```sh
+sudo go run ./cmd/hotspot -config thresholds.yaml
+```
+
+Any value not specified in the file retains its default. See the generated
+file for detailed comments explaining each parameter, or refer to
+[docs/diagnosis-guide.md](docs/diagnosis-guide.md) for threshold semantics.
 
 ## Testing CPU
 

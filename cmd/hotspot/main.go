@@ -31,6 +31,7 @@ import (
 
 	"github.com/srodi/hotspot-bpf/pkg/collector/cpu"
 	"github.com/srodi/hotspot-bpf/pkg/collector/memory"
+	"github.com/srodi/hotspot-bpf/pkg/config"
 	"github.com/srodi/hotspot-bpf/pkg/report"
 	"github.com/srodi/hotspot-bpf/pkg/types"
 	"github.com/srodi/hotspot-bpf/pkg/ui"
@@ -45,6 +46,7 @@ type runConfig struct {
 	topK         int
 	hideKernel   bool
 	cgroupFilter string
+	thresholds   config.Thresholds
 }
 
 func parseConfig() runConfig {
@@ -52,13 +54,30 @@ func parseConfig() runConfig {
 	topK := flag.Int("topk", types.DefaultTopK, "number of processes to display per section")
 	hideKernel := flag.Bool("hide-kernel", true, "hide kernel threads such as kworker, ksoftirqd, etc")
 	cgroupFilter := flag.String("cgroup-filter", "", "only show processes whose cgroup path contains this substring (case-insensitive)")
+	configPath := flag.String("config", "", "path to YAML config file for classification thresholds (see -generate-config)")
+	generateConfig := flag.Bool("generate-config", false, "print the default config YAML to stdout and exit")
 	flag.Parse()
+
+	if *generateConfig {
+		fmt.Print(config.DefaultYAML())
+		os.Exit(0)
+	}
+
+	th := config.Default()
+	if *configPath != "" {
+		var err error
+		th, err = config.LoadFile(*configPath)
+		if err != nil {
+			log.Fatalf("loading config: %v", err)
+		}
+	}
 
 	cfg := runConfig{
 		interval:     *interval,
 		topK:         *topK,
 		hideKernel:   *hideKernel,
 		cgroupFilter: strings.ToLower(strings.TrimSpace(*cgroupFilter)),
+		thresholds:   th,
 	}
 	if cfg.interval <= 0 {
 		cfg.interval = defaultInterval
@@ -97,7 +116,7 @@ func main() {
 	cleanupTerminal := enableSingleView()
 	defer cleanupTerminal()
 
-	rssTracker := report.NewRSSTracker(3)
+	rssTracker := report.NewRSSTracker(cfg.thresholds.RSSTracker.WindowTicks)
 
 	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
@@ -138,7 +157,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		pageFaults = nil
 	}
 
-	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker)
+	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker, cfg.thresholds)
 	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter}
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
 	focus := report.SelectFocusCandidate(filteredRows)
