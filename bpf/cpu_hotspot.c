@@ -28,10 +28,14 @@ struct cpu_state {
 };
 
 // Per-PID cumulative CPU time + metadata for the current sampling window.
+// cpu_id is the last CPU core observed at switch-out (not necessarily stable
+// for migratory workloads — it's a snapshot, not a primary-core assignment).
 struct pid_stat {
 	u64 cpu_time_ns;
 	char comm[16];
 	char cgroup[64];
+	u32 cpu_id;
+	u32 _pad;
 };
 
 struct {
@@ -138,17 +142,20 @@ int handle_sched_switch(struct trace_event_raw_sched_switch *ctx) {
 	if (st->pid != 0) {
 		u64 delta = ts - st->ts;
 		u32 pid = st->pid;
+		u32 cpu = bpf_get_smp_processor_id();
 
 		struct pid_stat *ps = bpf_map_lookup_elem(&pid_stats, &pid);
 		if (!ps) {
 			struct pid_stat new_ps = {};
 			new_ps.cpu_time_ns = delta;
+			new_ps.cpu_id = cpu;
 			bpf_get_current_comm(new_ps.comm, sizeof(new_ps.comm));
 			if (!snapshot_cgroup(new_ps.cgroup, sizeof(new_ps.cgroup)))
 				write_placeholder(new_ps.cgroup, sizeof(new_ps.cgroup));
 			bpf_map_update_elem(&pid_stats, &pid, &new_ps, BPF_ANY);
 		} else {
 			ps->cpu_time_ns += delta;
+			ps->cpu_id = cpu;
 			if (ps->cgroup[0] == '\0' && !snapshot_cgroup(ps->cgroup, sizeof(ps->cgroup)))
 				write_placeholder(ps->cgroup, sizeof(ps->cgroup));
 			if (ps->comm[0] == '\0')

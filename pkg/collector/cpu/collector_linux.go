@@ -59,10 +59,11 @@ func (c *Collector) Snapshot(limit int) ([]types.CPUStat, error) {
 		}
 
 		stats = append(stats, types.CPUStat{
-			PID:    pid,
-			Comm:   cStr(stat.Comm[:]),
-			Cgroup: cStr(stat.Cgroup[:]),
-			Ns:     stat.CPUTimeNS,
+			PID:     pid,
+			Comm:    cStr(stat.Comm[:]),
+			Cgroup:  cStr(stat.Cgroup[:]),
+			Ns:      stat.CPUTimeNS,
+			CPUCore: stat.CPUId,
 		})
 	}
 	if err := iter.Err(); err != nil {
@@ -163,4 +164,6 @@ type pidStat struct {
 	CPUTimeNS uint64
 	Comm      [16]byte
 	Cgroup    [64]byte
+	CPUId     uint32
+	Pad       uint32
 }

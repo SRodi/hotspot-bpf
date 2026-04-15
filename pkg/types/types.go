@@ -8,10 +8,11 @@ const DefaultTopK = 5
 
 // CPUStat holds information about how much CPU time a PID consumed during a window.
 type CPUStat struct {
-	PID    uint32
-	Comm   string
-	Cgroup string
-	Ns     uint64
+	PID     uint32
+	Comm    string
+	Cgroup  string
+	Ns      uint64
+	CPUCore uint32 // last CPU core observed at switch-out
 }
 
 // ContentionStat captures how often one PID preempted another within a window.

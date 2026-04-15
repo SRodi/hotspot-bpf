@@ -22,6 +22,8 @@ type hotspot_bpfPidStat struct {
 	CpuTimeNs uint64
 	Comm      [16]int8
 	Cgroup    [64]int8
+	CpuId     uint32
+	Pad       uint32
 }
 
 // loadHotspot_bpf returns the embedded CollectionSpec for hotspot_bpf.

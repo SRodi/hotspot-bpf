@@ -155,7 +155,14 @@ produces garbage data.
 | `u64 cpu_time_ns`            | `CPUTimeNS uint64`               | 8    |
 | `char comm[16]`              | `Comm [16]byte`                  | 16   |
 | `char cgroup[64]`            | `Cgroup [64]byte`                | 64   |
-| **Total: 88 bytes**          | **Total: 88 bytes**              |      |
+| `u32 cpu_id`                 | `CPUId uint32`                   | 4    |
+| `u32 _pad`                   | `Pad uint32`                     | 4    |
+| **Total: 96 bytes**          | **Total: 96 bytes**              |      |
+
+> **`cpu_id`** is the last CPU core observed at switch-out via
+> `bpf_get_smp_processor_id()`. It is NOT the "primary" core — a process
+> may migrate between cores within a sampling window. The TUI labels it
+> `LastCore` to reflect this.
 
 ### RSS data sources (primary + fallback)
 
@@ -189,3 +196,10 @@ classification.
 - **Diagnoses are heuristics**: labels like "OOM risk" indicate elevated
   probability, not certainty. Always corroborate with other tools before
   taking action (e.g., `dmesg`, `oom_score_adj`, cgroup memory limits).
+- **CPU core is last-observed**: the `LastCore` column shows the core at the
+  most recent context switch, not the core where the process spent the most
+  time. Migratory workloads may show different cores each tick.
+- **Core CPU% can exceed 100%**: if a process migrates between cores within
+  a tick, its accumulated CPU time may exceed one core's capacity.
+- **Colors require a TTY**: ANSI colors are automatically disabled when stdout
+  is not a terminal, when `NO_COLOR` is set, or when `TERM=dumb`.

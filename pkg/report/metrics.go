@@ -91,6 +91,8 @@ type ProcMetrics struct {
 	CPUNs           uint64
 	CPUMs           float64
 	CPUPercent      float64
+	CPUCore         uint32  // last CPU core observed at switch-out
+	CoreCPUPercent  float64 // CPU% relative to a single core (not system-wide)
 	RSSMB           float64
 	RSSRatio        float64
 	Faults          uint64
@@ -147,6 +149,7 @@ func BuildProcMetrics(
 	}
 
 	totalCapacity := float64(interval.Nanoseconds()) * float64(runtime.NumCPU())
+	singleCoreCapacity := float64(interval.Nanoseconds())
 	intervalSeconds := interval.Seconds()
 	if intervalSeconds <= 0 {
 		intervalSeconds = 1
@@ -162,8 +165,12 @@ func BuildProcMetrics(
 		}
 		row.CPUNs = stat.Ns
 		row.CPUMs = float64(stat.Ns) / 1e6
+		row.CPUCore = stat.CPUCore
 		if totalCapacity > 0 {
 			row.CPUPercent = 100 * float64(stat.Ns) / totalCapacity
+		}
+		if singleCoreCapacity > 0 {
+			row.CoreCPUPercent = 100 * float64(stat.Ns) / singleCoreCapacity
 		}
 	}
 

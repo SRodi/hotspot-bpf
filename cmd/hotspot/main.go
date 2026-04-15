@@ -164,61 +164,76 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 
 	var buf bytes.Buffer
 	buf.WriteString(ui.Banner())
-	buf.WriteString("\n")
-	fmt.Fprintf(&buf, "hotspot-bpf (press Ctrl+C to exit)\n")
-	fmt.Fprintf(&buf, "Updated: %s | Interval: %v\n\n", time.Now().Format(time.RFC3339), cfg.interval)
 
+	timestamp := ui.C(ui.Dim, time.Now().Format(time.RFC3339))
+	interval := ui.C(ui.Dim, cfg.interval.String())
+	fmt.Fprintf(&buf, "%s  %s │ %s  %s\n",
+		ui.C(ui.Bold+ui.White, "hotspot-bpf"), ui.C(ui.Dim, "(Ctrl+C to exit)"),
+		ui.C(ui.Gray, "Updated:"), timestamp)
+	fmt.Fprintf(&buf, "%s  %s\n", ui.C(ui.Gray, "Interval:"), interval)
+
+	// Focus banner
 	if focus != nil {
-		fmt.Fprintf(&buf, "[!] Focus: %s (pid %d)\n", focus.Comm, focus.PID)
-		fmt.Fprintf(&buf, "   Reason: %s - %s\n\n", focus.Diagnosis, report.FocusSummary(*focus))
+		buf.WriteString(ui.FocusBanner(focus.Comm, focus.PID, focus.Diagnosis, report.FocusSummary(*focus)))
 	} else if len(filteredRows) == 0 {
-		fmt.Fprintf(&buf, "[!] No processes matched current filters (topk=%d, hide-kernel=%t)\n\n", cfg.topK, cfg.hideKernel)
+		fmt.Fprintf(&buf, "\n%s No processes matched current filters (topk=%d, hide-kernel=%t)\n",
+			ui.C(ui.Dim, "[–]"), cfg.topK, cfg.hideKernel)
 	}
 
-	fmt.Fprintf(&buf, "[Top %d CPU, window %v]\n", cfg.topK, cfg.interval)
+	// CPU Usage table
+	buf.WriteString(ui.SectionHeader(fmt.Sprintf("Top %d CPU · window %v", cfg.topK, cfg.interval)))
 	cpuRows := report.CPUUsageRows(filteredRows, cfg.topK)
 	if len(cpuRows) == 0 {
-		fmt.Fprintln(&buf, "No CPU samples for this window")
+		fmt.Fprintln(&buf, ui.C(ui.Dim, "No CPU samples for this window"))
 	} else {
 		tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tCPU(%%)\tDiag")
+		fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tCGROUP\tCPU(ms)\tCPU(%)\tCore%\tLastCore\tDiag"))
 		for _, row := range cpuRows {
-			fmt.Fprintf(tw, "%d\t%s\t%s\t%.2f\t%.2f\t%s\n", row.PID, row.Comm, row.Cgroup, row.CPUMs, row.CPUPercent, row.Diagnosis)
+			diag := ui.DiagLabel(row.Diagnosis)
+			fmt.Fprintf(tw, "%d\t%s\t%s\t%.2f\t%.2f\t%.1f\t%d\t%s\n",
+				row.PID, row.Comm, row.Cgroup, row.CPUMs, row.CPUPercent,
+				row.CoreCPUPercent, row.CPUCore, diag)
 		}
 		tw.Flush()
 	}
 
+	// CPU Contention table
 	if contentionErr != nil {
-		fmt.Fprintf(&buf, "\n[CPU Contention unavailable: %v]\n", contentionErr)
+		buf.WriteString(ui.SectionHeader("CPU Contention"))
+		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("unavailable: %v", contentionErr)))
 	} else {
-		fmt.Fprintf(&buf, "\n[CPU Contention - last %v]\n", cfg.interval)
+		buf.WriteString(ui.SectionHeader(fmt.Sprintf("CPU Contention · last %v", cfg.interval)))
 		rows := report.FilterContentionRows(contentionStats, filterCfg, procIndex, cfg.topK)
 		if len(rows) == 0 {
-			fmt.Fprintln(&buf, "No preemptions recorded in this window")
+			fmt.Fprintln(&buf, ui.C(ui.Dim, "No preemptions recorded in this window"))
 		} else {
 			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "PID\tCOMM\tPREEMPTED BY\tTIMES")
+			fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tPREEMPTED BY\tTIMES"))
 			for _, pair := range rows {
-				fmt.Fprintf(tw, "%d\t%s\t%d (%s)\t%d\n", pair.VictimPID, pair.VictimComm, pair.AggressorPID, pair.AggressorComm, pair.Count)
+				fmt.Fprintf(tw, "%d\t%s\t%d (%s)\t%d\n",
+					pair.VictimPID, pair.VictimComm, pair.AggressorPID, pair.AggressorComm, pair.Count)
 			}
 			tw.Flush()
 		}
 	}
 
-	fmt.Fprintf(&buf, "\n[CPU Cost per Fault - CPU vs Page Faults]\n")
+	// CPU Cost per Fault table
+	buf.WriteString(ui.SectionHeader("CPU Cost per Fault · CPU vs Page Faults"))
 	if pfErr != nil {
-		fmt.Fprintf(&buf, "Page fault tracker unavailable: %v\n", pfErr)
+		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("Page fault tracker unavailable: %v", pfErr)))
 	} else {
 		costLimit := max(cfg.topK*2, cfg.topK)
 		costRows := report.CPUCostRows(filteredRows, costLimit)
 		if len(costRows) == 0 {
-			fmt.Fprintln(&buf, "No page faults recorded in this window")
+			fmt.Fprintln(&buf, ui.C(ui.Dim, "No page faults recorded in this window"))
 		} else {
 			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tRSS(MB)\tFaults\tFaults/sec\tCPU Cost per Fault (ms)\tDiagnosis")
+			fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tCGROUP\tCPU(ms)\tRSS(MB)\tFaults\tFaults/sec\tCost/Fault(ms)\tDiag"))
 			for _, row := range costRows {
+				diag := ui.DiagLabel(row.Diagnosis)
 				fmt.Fprintf(tw, "%d\t%s\t%s\t%.2f\t%.1f\t%d\t%.1f\t%.2f\t%s\n",
-					row.PID, row.Comm, row.Cgroup, row.CPUMs, row.RSSMB, row.Faults, row.FaultsPerSec, row.CPUCostPerFault, row.Diagnosis)
+					row.PID, row.Comm, row.Cgroup, row.CPUMs, row.RSSMB,
+					row.Faults, row.FaultsPerSec, row.CPUCostPerFault, diag)
 			}
 			tw.Flush()
 		}
