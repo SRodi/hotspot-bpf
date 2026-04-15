@@ -76,8 +76,8 @@ func Default() Thresholds {
 		CPUBound: CPUBoundThresholds{
 			CPUPercent:      50,
 			CoreCPUPercent:  90,
-			MaxFaultsPerSec: 1,
-			MaxPreempted:    0,
+			MaxFaultsPerSec: 10,
+			MaxPreempted:    50,
 		},
 		MemThrashing: MemThrashingThresholds{
 			SevereFaultsPerSec:   1000,
@@ -155,8 +155,8 @@ oom:
 cpu_bound:
   cpu_percent: 50        # system-wide CPU usage must exceed this (%)
   core_cpu_percent: 90   # single-core CPU usage must exceed this (%)
-  max_faults_per_sec: 1  # faults/sec must be below this
-  max_preempted: 0       # preemption count must be at or below this
+  max_faults_per_sec: 10 # faults/sec must be below this (minor faults are normal)
+  max_preempted: 50      # preemption count must be at or below this
 
 # --- Mem-thrashing ---
 # Two tiers: severe (very costly faults) and moderate (costly faults).
