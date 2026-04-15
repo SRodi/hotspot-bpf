@@ -187,7 +187,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		fmt.Fprintln(&buf, ui.C(ui.Dim, "No CPU samples for this window"))
 	} else {
 		tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tCGROUP\tCPU(ms)\tCPU(%)\tCore%\tLastCore\tDiag"))
+		fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tCPU(%)\tCore%\tLastCore\tDiag")
 		for _, row := range cpuRows {
 			diag := ui.DiagLabel(row.Diagnosis)
 			fmt.Fprintf(tw, "%d\t%s\t%s\t%.2f\t%.2f\t%.1f\t%d\t%s\n",
@@ -208,7 +208,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 			fmt.Fprintln(&buf, ui.C(ui.Dim, "No preemptions recorded in this window"))
 		} else {
 			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tPREEMPTED BY\tTIMES"))
+			fmt.Fprintln(tw, "PID\tCOMM\tPREEMPTED BY\tTIMES")
 			for _, pair := range rows {
 				fmt.Fprintf(tw, "%d\t%s\t%d (%s)\t%d\n",
 					pair.VictimPID, pair.VictimComm, pair.AggressorPID, pair.AggressorComm, pair.Count)
@@ -228,7 +228,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 			fmt.Fprintln(&buf, ui.C(ui.Dim, "No page faults recorded in this window"))
 		} else {
 			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(tw, ui.C(ui.Bold, "PID\tCOMM\tCGROUP\tCPU(ms)\tRSS(MB)\tFaults\tFaults/sec\tCost/Fault(ms)\tDiag"))
+			fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tRSS(MB)\tFaults\tFaults/sec\tCost/Fault(ms)\tDiag")
 			for _, row := range costRows {
 				diag := ui.DiagLabel(row.Diagnosis)
 				fmt.Fprintf(tw, "%d\t%s\t%s\t%.2f\t%.1f\t%d\t%.1f\t%.2f\t%s\n",

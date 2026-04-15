@@ -104,9 +104,9 @@ func SectionHeader(title string) string {
 		line += "─"
 	}
 	if !colorEnabled {
-		return fmt.Sprintf("\n%s\n%s", title, line)
+		return fmt.Sprintf("\n%s\n%s\n", title, line)
 	}
-	return fmt.Sprintf("\n%s%s%s\n%s%s%s", Bold, White, title, Dim, line, Reset)
+	return fmt.Sprintf("\n%s%s%s\n%s%s%s\n", Bold, White, title, Dim, line, Reset)
 }
 
 // FocusBanner formats the Focus section with severity-appropriate coloring.
