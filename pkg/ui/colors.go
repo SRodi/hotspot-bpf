@@ -126,3 +126,28 @@ func FocusBanner(comm string, pid uint32, diagnosis, summary string) string {
 		indicator, label, pidStr,
 		indicator, reason, detail)
 }
+
+// FocusGroupHeader formats a diagnosis group header for the Focus section.
+func FocusGroupHeader(diagnosis string, count int) string {
+	diagColor := DiagColor(diagnosis)
+	if !colorEnabled {
+		return fmt.Sprintf("\n  [%s] (%d)\n", diagnosis, count)
+	}
+	return fmt.Sprintf("\n  %s %s\n",
+		C(diagColor, diagnosis),
+		C(Dim, fmt.Sprintf("(%d)", count)))
+}
+
+// FocusEntry formats a single process line within a focus group.
+func FocusEntry(comm string, pid uint32, summary string, diagnosis string) string {
+	diagColor := DiagColor(diagnosis)
+	if !colorEnabled {
+		return fmt.Sprintf("    %-16s pid %-8d %s\n", comm, pid, summary)
+	}
+	indicator := C(diagColor, "▌")
+	return fmt.Sprintf("  %s %-16s %s  %s\n",
+		indicator,
+		C(Bold+White, comm),
+		C(Dim, fmt.Sprintf("pid %-8d", pid)),
+		C(Gray, summary))
+}

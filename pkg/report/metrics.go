@@ -332,36 +332,63 @@ func FilterContentionRows(entries []types.ContentionStat, cfg FilterConfig, proc
 	return rows
 }
 
-// SelectFocusCandidate picks the most interesting process to summarize for the operator.
-func SelectFocusCandidate(rows []ProcMetrics) *ProcMetrics {
-	if len(rows) == 0 {
-		return nil
-	}
-	var best *ProcMetrics
-	bestScore := -1.0
+// FocusGroup represents all non-OK processes sharing the same diagnosis.
+type FocusGroup struct {
+	Diagnosis string
+	Severity  int
+	Procs     []ProcMetrics
+}
+
+// SelectFocusGroups returns all non-OK processes grouped by diagnosis,
+// sorted by severity (highest first). Within each group, processes are
+// sorted by the most relevant signal for that diagnosis.
+func SelectFocusGroups(rows []ProcMetrics) []FocusGroup {
+	groups := make(map[string][]ProcMetrics)
 	for _, row := range rows {
-		severity := diagnosisSeverity(row.Diagnosis)
-		if severity == 0 && row.CPUPercent < 1 && row.FaultsPerSec < 1 {
+		sev := diagnosisSeverity(row.Diagnosis)
+		if sev == 0 {
 			continue
 		}
-		score := float64(severity)*1000 + row.CPUPercent
-		if best == nil || score > bestScore {
-			copy := row
-			best = &copy
-			bestScore = score
+		groups[row.Diagnosis] = append(groups[row.Diagnosis], row)
+	}
+	if len(groups) == 0 {
+		return nil
+	}
+
+	result := make([]FocusGroup, 0, len(groups))
+	for diag, procs := range groups {
+		sortFocusProcs(diag, procs)
+		result = append(result, FocusGroup{
+			Diagnosis: diag,
+			Severity:  diagnosisSeverity(diag),
+			Procs:     procs,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Severity > result[j].Severity
+	})
+	return result
+}
+
+// sortFocusProcs orders processes within a focus group by the most relevant
+// metric for that diagnosis type.
+func sortFocusProcs(diag string, procs []ProcMetrics) {
+	sort.Slice(procs, func(i, j int) bool {
+		switch diag {
+		case "OOM risk – memory growth":
+			return procs[i].RSSMB > procs[j].RSSMB
+		case "Mem-thrashing":
+			return procs[i].FaultsPerSec > procs[j].FaultsPerSec
+		case "Starved":
+			return procs[i].Preempted > procs[j].Preempted
+		case "Noisy neighbor":
+			return procs[i].PreemptsOthers > procs[j].PreemptsOthers
+		case "CPU-bound":
+			return procs[i].CoreCPUPercent > procs[j].CoreCPUPercent
+		default:
+			return procs[i].CPUPercent > procs[j].CPUPercent
 		}
-	}
-	if best != nil {
-		return best
-	}
-	maxIdx := 0
-	for i := 1; i < len(rows); i++ {
-		if rows[i].CPUPercent > rows[maxIdx].CPUPercent {
-			maxIdx = i
-		}
-	}
-	copy := rows[maxIdx]
-	return &copy
+	})
 }
 
 // FocusSummary returns a short explanation string for the status line.

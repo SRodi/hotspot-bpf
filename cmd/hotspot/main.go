@@ -160,7 +160,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker, cfg.thresholds)
 	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter}
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
-	focus := report.SelectFocusCandidate(filteredRows)
+	focusGroups := report.SelectFocusGroups(filteredRows)
 
 	var buf bytes.Buffer
 	buf.WriteString(ui.Banner())
@@ -172,9 +172,15 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		ui.C(ui.Gray, "Updated:"), timestamp)
 	fmt.Fprintf(&buf, "%s  %s\n", ui.C(ui.Gray, "Interval:"), interval)
 
-	// Focus banner
-	if focus != nil {
-		buf.WriteString(ui.FocusBanner(focus.Comm, focus.PID, focus.Diagnosis, report.FocusSummary(*focus)))
+	// Focus section — all non-OK processes grouped by diagnosis
+	if len(focusGroups) > 0 {
+		buf.WriteString(ui.SectionHeader("Focus"))
+		for _, group := range focusGroups {
+			buf.WriteString(ui.FocusGroupHeader(group.Diagnosis, len(group.Procs)))
+			for _, proc := range group.Procs {
+				buf.WriteString(ui.FocusEntry(proc.Comm, proc.PID, report.FocusSummary(proc), proc.Diagnosis))
+			}
+		}
 	} else if len(filteredRows) == 0 {
 		fmt.Fprintf(&buf, "\n%s No processes matched current filters (topk=%d, hide-kernel=%t)\n",
 			ui.C(ui.Dim, "[–]"), cfg.topK, cfg.hideKernel)

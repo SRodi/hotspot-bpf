@@ -175,39 +175,61 @@ func TestFilterContentionRows(t *testing.T) {
 	}
 }
 
-func TestSelectFocusCandidate(t *testing.T) {
-	t.Run("severityPreferred", func(t *testing.T) {
+func TestSelectFocusGroups(t *testing.T) {
+	t.Run("groupedBySeverity", func(t *testing.T) {
 		rows := []ProcMetrics{
-			{PID: 1, Diagnosis: "OK", CPUPercent: 60, FaultsPerSec: 10},
-			{PID: 2, Diagnosis: "Starved", CPUPercent: 5, FaultsPerSec: 2},
-			{PID: 3, Diagnosis: "Mem-thrashing", CPUPercent: 1, FaultsPerSec: 2},
+			{PID: 1, Diagnosis: "OK", CPUPercent: 60},
+			{PID: 2, Diagnosis: "Starved", CPUPercent: 5, Preempted: 200},
+			{PID: 3, Diagnosis: "Mem-thrashing", CPUPercent: 1, FaultsPerSec: 900},
+			{PID: 4, Diagnosis: "Starved", CPUPercent: 3, Preempted: 400},
 		}
-		candidate := SelectFocusCandidate(rows)
-		if candidate == nil || candidate.PID != 3 {
-			t.Fatalf("expected Mem-thrashing row, got %+v", candidate)
+		groups := SelectFocusGroups(rows)
+		if len(groups) != 2 {
+			t.Fatalf("expected 2 groups, got %d", len(groups))
+		}
+		// Mem-thrashing (severity 4) should come before Starved (severity 3)
+		if groups[0].Diagnosis != "Mem-thrashing" {
+			t.Fatalf("expected Mem-thrashing first, got %s", groups[0].Diagnosis)
+		}
+		if groups[1].Diagnosis != "Starved" {
+			t.Fatalf("expected Starved second, got %s", groups[1].Diagnosis)
+		}
+		// Starved group should be sorted by preemptions (highest first)
+		if groups[1].Procs[0].PID != 4 {
+			t.Fatalf("expected PID 4 (more preempted) first in Starved group, got PID %d", groups[1].Procs[0].PID)
 		}
 	})
 
-	t.Run("oomRiskPreferred", func(t *testing.T) {
+	t.Run("oomRiskFirst", func(t *testing.T) {
 		rows := []ProcMetrics{
-			{PID: 1, Diagnosis: "CPU-bound", CPUPercent: 80, FaultsPerSec: 0.5},
-			{PID: 2, Diagnosis: "Mem-thrashing", CPUPercent: 10, FaultsPerSec: 900},
-			{PID: 3, Diagnosis: "OOM risk – memory growth", CPUPercent: 2, FaultsPerSec: 500, RSSMB: 2048, RSSGrowing: true},
+			{PID: 1, Diagnosis: "CPU-bound", CPUPercent: 80, CoreCPUPercent: 100},
+			{PID: 2, Diagnosis: "OOM risk – memory growth", RSSMB: 2048, FaultsPerSec: 500, RSSGrowing: true},
+			{PID: 3, Diagnosis: "Mem-thrashing", FaultsPerSec: 900},
 		}
-		candidate := SelectFocusCandidate(rows)
-		if candidate == nil || candidate.PID != 3 {
-			t.Fatalf("expected OOM risk row as focus, got %+v", candidate)
+		groups := SelectFocusGroups(rows)
+		if len(groups) != 3 {
+			t.Fatalf("expected 3 groups, got %d", len(groups))
+		}
+		if groups[0].Diagnosis != "OOM risk – memory growth" {
+			t.Fatalf("expected OOM first, got %s", groups[0].Diagnosis)
 		}
 	})
 
-	t.Run("fallbackToMaxCPU", func(t *testing.T) {
+	t.Run("allOKReturnsNil", func(t *testing.T) {
 		rows := []ProcMetrics{
-			{PID: 10, Diagnosis: "OK", CPUPercent: 0.5, FaultsPerSec: 0.2},
-			{PID: 11, Diagnosis: "OK", CPUPercent: 5, FaultsPerSec: 0.2},
+			{PID: 10, Diagnosis: "OK", CPUPercent: 5},
+			{PID: 11, Diagnosis: "OK", CPUPercent: 15},
 		}
-		candidate := SelectFocusCandidate(rows)
-		if candidate == nil || candidate.PID != 11 {
-			t.Fatalf("expected highest CPU row, got %+v", candidate)
+		groups := SelectFocusGroups(rows)
+		if len(groups) != 0 {
+			t.Fatalf("expected no focus groups for all-OK, got %d", len(groups))
+		}
+	})
+
+	t.Run("emptyInput", func(t *testing.T) {
+		groups := SelectFocusGroups(nil)
+		if groups != nil {
+			t.Fatalf("expected nil for empty input, got %+v", groups)
 		}
 	})
 }
