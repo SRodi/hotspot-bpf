@@ -299,6 +299,16 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 			row:  ProcMetrics{CPUPercent: 10, FaultsPerSec: 800, CPUCostPerFault: 0.2, Faults: 300},
 			want: "Mem-thrashing",
 		},
+		{
+			name: "cpuBoundByCoreSaturation",
+			row:  ProcMetrics{CPUPercent: 5, CoreCPUPercent: 100, FaultsPerSec: 0, Preempted: 0},
+			want: "CPU-bound",
+		},
+		{
+			name: "notCpuBoundLowCore",
+			row:  ProcMetrics{CPUPercent: 5, CoreCPUPercent: 30, FaultsPerSec: 0, Preempted: 0},
+			want: "OK",
+		},
 	}
 
 	for _, tc := range testCases {

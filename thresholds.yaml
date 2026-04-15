@@ -28,9 +28,13 @@ oom:
 
 # --- CPU-bound ---
 # Triggers when a process uses significant CPU without memory pressure.
-# Raise cpu_percent on busy systems where 50% is normal for workers.
+# A process matches if EITHER system-wide cpu_percent OR single-core
+# core_cpu_percent is exceeded. On multi-core machines, a single-threaded
+# busy loop shows low system CPU% but ~100% on one core — core_cpu_percent
+# catches this case so a fully saturated core is always flagged.
 cpu_bound:
-  cpu_percent: 50        # CPU usage must exceed this (%)
+  cpu_percent: 50        # system-wide CPU usage must exceed this (%)
+  core_cpu_percent: 90   # single-core CPU usage must exceed this (%)
   max_faults_per_sec: 1  # faults/sec must be below this
   max_preempted: 0       # preemption count must be at or below this
 

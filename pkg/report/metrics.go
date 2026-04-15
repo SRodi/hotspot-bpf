@@ -418,8 +418,12 @@ func classifyProc(row *ProcMetrics, th config.Thresholds) string {
 		return "OOM risk – memory growth"
 	}
 
-	// CPU-bound
-	if row.CPUPercent > th.CPUBound.CPUPercent &&
+	// CPU-bound: either system-wide CPU% is high, or a single core is saturated.
+	// On multi-core machines a single-threaded busy loop may show only ~5% system
+	// CPU but ~100% on one core — that core is effectively unusable.
+	cpuHot := row.CPUPercent > th.CPUBound.CPUPercent ||
+		row.CoreCPUPercent >= th.CPUBound.CoreCPUPercent
+	if cpuHot &&
 		row.FaultsPerSec < th.CPUBound.MaxFaultsPerSec &&
 		row.Preempted <= th.CPUBound.MaxPreempted {
 		return "CPU-bound"
