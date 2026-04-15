@@ -271,6 +271,21 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 			want: "OOM risk – memory growth",
 		},
 		{
+			name: "oomRiskAtBoundary",
+			row:  ProcMetrics{RSSMB: 500, FaultsPerSec: 200},
+			want: "OOM risk – memory growth",
+		},
+		{
+			name: "oomRiskByRatio",
+			row:  ProcMetrics{RSSMB: 400, FaultsPerSec: 300, RSSRatio: 0.10},
+			want: "OOM risk – memory growth",
+		},
+		{
+			name: "belowOomThresholds",
+			row:  ProcMetrics{RSSMB: 400, FaultsPerSec: 300, RSSRatio: 0.05},
+			want: "OK",
+		},
+		{
 			name: "memThrashing",
 			row:  ProcMetrics{CPUPercent: 10, FaultsPerSec: 800, CPUCostPerFault: 0.2, Faults: 300},
 			want: "Mem-thrashing",

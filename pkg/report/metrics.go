@@ -308,9 +308,9 @@ func classifyProc(row *ProcMetrics) string {
 	veryCostlyFaults := row.CPUCostPerFault > 0.5 && row.Faults > 0
 
 	rssRatio := row.RSSRatio
-	bigProcess := row.RSSMB > 1000       // > 1GB
-	highRatio := rssRatio > 0.3          // > 30% of RAM
-	manyFaults := row.FaultsPerSec > 200 // lots of PFs
+	bigProcess := row.RSSMB >= 500       // >= 500MB
+	highRatio := rssRatio >= 0.10        // >= 10% of RAM
+	manyFaults := row.FaultsPerSec >= 200 // sustained page-fault pressure
 
 	// --- highest priority: OOM-ish behavior ---
 	if (bigProcess || highRatio) && manyFaults {

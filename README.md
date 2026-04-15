@@ -129,14 +129,18 @@ sudo stress-ng --vm 8 --vm-bytes 95% --vm-populate --vm-keep --timeout 30s
 
 ## Testing OOM Growth
 
+In a separate terminal, run the memory leak below. The process allocates
+\~40 MB/s, so RSS crosses the 500 MB detection threshold in about 25 seconds
+(roughly 5 sampling windows at the default 5 s interval).
+
 ```python
 # memory leak
 python3 - << 'EOF'
 import time
 x = []
 while True:
-    x.append(' ' * 10_000_000)  # 10MB per loop
-    time.sleep(0.5)
+    x.append(' ' * 10_000_000)  # ~10MB per iteration
+    time.sleep(0.25)
 EOF
 ```
 
