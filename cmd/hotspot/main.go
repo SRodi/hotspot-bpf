@@ -83,6 +83,8 @@ func main() {
 	cleanupTerminal := enableSingleView()
 	defer cleanupTerminal()
 
+	rssTracker := report.NewRSSTracker(3)
+
 	ticker := time.NewTicker(cfg.interval)
 	defer ticker.Stop()
 
@@ -91,7 +93,7 @@ func main() {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := snapshotAndPrint(cpuCollector, memCollector, cfg); err != nil {
+			if err := snapshotAndPrint(cpuCollector, memCollector, cfg, rssTracker); err != nil {
 				log.Printf("snapshot failed: %v", err)
 			}
 			if err := cpuCollector.Reset(); err != nil {
@@ -104,7 +106,7 @@ func main() {
 	}
 }
 
-func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collector, cfg runConfig) error {
+func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collector, cfg runConfig, rssTracker *report.RSSTracker) error {
 	cpuLimit := max(cfg.topK*3, cfg.topK)
 	stats, err := cpuCollector.Snapshot(cpuLimit)
 	if err != nil {
@@ -122,7 +124,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		pageFaults = nil
 	}
 
-	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval)
+	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker)
 	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter}
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
 	focus := report.SelectFocusCandidate(filteredRows)

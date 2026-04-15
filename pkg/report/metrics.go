@@ -15,6 +15,58 @@ import (
 // rssBytesForPIDs allows tests to stub RSS lookups that normally hit /proc.
 var rssBytesForPIDs = memory.RSSBytesForPIDs
 
+// RSSTracker records per-PID RSS across ticks to detect growth trends.
+type RSSTracker struct {
+	history map[uint32][]float64
+	maxLen  int
+}
+
+// NewRSSTracker creates a tracker that keeps the last n RSS samples per PID.
+func NewRSSTracker(windowTicks int) *RSSTracker {
+	if windowTicks < 2 {
+		windowTicks = 2
+	}
+	return &RSSTracker{
+		history: make(map[uint32][]float64),
+		maxLen:  windowTicks,
+	}
+}
+
+// Record stores the current RSS for a PID. Call once per tick after BuildProcMetrics.
+func (t *RSSTracker) Record(pid uint32, rssMB float64) {
+	h := t.history[pid]
+	h = append(h, rssMB)
+	if len(h) > t.maxLen {
+		h = h[len(h)-t.maxLen:]
+	}
+	t.history[pid] = h
+}
+
+// IsGrowing returns true if the PID's RSS has grown consistently over at least
+// 2 ticks with a minimum total increase of minDeltaMB.
+func (t *RSSTracker) IsGrowing(pid uint32, minDeltaMB float64) bool {
+	h := t.history[pid]
+	if len(h) < 2 {
+		return false
+	}
+	// require monotonic non-decreasing with net growth above threshold
+	for i := 1; i < len(h); i++ {
+		if h[i] < h[i-1] {
+			return false
+		}
+	}
+	return (h[len(h)-1] - h[0]) >= minDeltaMB
+}
+
+// Prune removes PIDs that are no longer active (not in the current tick's set).
+func (t *RSSTracker) Prune(activePIDs map[uint32]bool) {
+	for pid := range t.history {
+		if !activePIDs[pid] {
+			delete(t.history, pid)
+		}
+	}
+}
+
 // ProcMetrics condenses CPU, memory, and contention stats for a PID during one sample window.
 type ProcMetrics struct {
 	PID             uint32
@@ -31,6 +83,7 @@ type ProcMetrics struct {
 	Preempted       uint64
 	PreemptsOthers  uint64
 	Diagnosis       string
+	RSSGrowing      bool
 }
 
 // FilterConfig controls which processes appear in CLI tables.
@@ -48,11 +101,13 @@ func (cfg FilterConfig) hideKernelEnabled() bool {
 
 // BuildProcMetrics merges raw collector stats into per-PID rows and returns both
 // a slice for table rendering and an index for quick lookups.
+// If rssTracker is non-nil, it records RSS and marks processes with growing RSS.
 func BuildProcMetrics(
 	cpuStats []types.CPUStat,
 	pageFaults []types.PageFaultStat,
 	contention []types.ContentionStat,
 	interval time.Duration,
+	rssTracker *RSSTracker,
 ) ([]ProcMetrics, map[uint32]ProcMetrics) {
 	// compute once
 	totalMemBytes, err := memory.TotalMemoryBytes()
@@ -135,6 +190,19 @@ func BuildProcMetrics(
 	for pid, rss := range rssMap {
 		if row, ok := rows[uint32(pid)]; ok && row.RSSMB == 0 {
 			row.RSSMB = float64(rss) / (1024 * 1024)
+		}
+	}
+
+	// Record RSS in tracker and mark growing processes.
+	if rssTracker != nil {
+		activePIDs := make(map[uint32]bool, len(rows))
+		for pid, row := range rows {
+			activePIDs[pid] = true
+			rssTracker.Record(pid, row.RSSMB)
+		}
+		rssTracker.Prune(activePIDs)
+		for _, row := range rows {
+			row.RSSGrowing = rssTracker.IsGrowing(row.PID, 10) // >=10MB net growth
 		}
 	}
 
@@ -316,7 +384,9 @@ func classifyProc(row *ProcMetrics) string {
 	manyFaults := row.FaultsPerSec >= 200 // sustained page-fault pressure
 
 	// --- highest priority: OOM-ish behavior ---
-	if (bigProcess || highRatio) && manyFaults {
+	// Require RSS to be actively growing across ticks to avoid false positives
+	// from large-but-stable processes (e.g., JVMs, Node.js, databases).
+	if row.RSSGrowing && (bigProcess || highRatio) && manyFaults {
 		return "OOM risk – memory growth"
 	}
 

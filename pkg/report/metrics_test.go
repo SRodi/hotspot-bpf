@@ -26,7 +26,7 @@ func TestBuildProcMetricsMergesStats(t *testing.T) {
 	pageFaults := []types.PageFaultStat{{PID: 123, Comm: "worker", Cgroup: "/kubepods", Faults: 25, FaultsPerSec: 25}}
 	contention := []types.ContentionStat{{VictimPID: 123, VictimComm: "worker", AggressorPID: 456, AggressorComm: "noisy", Count: 150}}
 
-	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval)
+	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -84,7 +84,7 @@ func TestBuildProcMetricsDefaultsInterval(t *testing.T) {
 	cpuStats := []types.CPUStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Ns: cpuNs}}
 	pageFaults := []types.PageFaultStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Faults: 10}}
 
-	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, 0)
+	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, 0, nil)
 	row := index[99]
 	if row.CPUMs != float64(cpuNs)/1e6 {
 		t.Fatalf("unexpected CPUMs: %.3f", row.CPUMs)
@@ -188,7 +188,7 @@ func TestSelectFocusCandidate(t *testing.T) {
 		rows := []ProcMetrics{
 			{PID: 1, Diagnosis: "CPU-bound", CPUPercent: 80, FaultsPerSec: 0.5},
 			{PID: 2, Diagnosis: "Mem-thrashing", CPUPercent: 10, FaultsPerSec: 900},
-			{PID: 3, Diagnosis: "OOM risk – memory growth", CPUPercent: 2, FaultsPerSec: 500, RSSMB: 2048},
+			{PID: 3, Diagnosis: "OOM risk – memory growth", CPUPercent: 2, FaultsPerSec: 500, RSSMB: 2048, RSSGrowing: true},
 		}
 		candidate := SelectFocusCandidate(rows)
 		if candidate == nil || candidate.PID != 3 {
@@ -267,22 +267,27 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 		},
 		{
 			name: "oomRisk",
-			row:  ProcMetrics{RSSMB: 2048, FaultsPerSec: 500, RSSRatio: 0.4},
+			row:  ProcMetrics{RSSMB: 2048, FaultsPerSec: 500, RSSRatio: 0.4, RSSGrowing: true},
 			want: "OOM risk – memory growth",
 		},
 		{
 			name: "oomRiskAtBoundary",
-			row:  ProcMetrics{RSSMB: 500, FaultsPerSec: 200},
+			row:  ProcMetrics{RSSMB: 500, FaultsPerSec: 200, RSSGrowing: true},
 			want: "OOM risk – memory growth",
 		},
 		{
 			name: "oomRiskByRatio",
-			row:  ProcMetrics{RSSMB: 400, FaultsPerSec: 300, RSSRatio: 0.10},
+			row:  ProcMetrics{RSSMB: 400, FaultsPerSec: 300, RSSRatio: 0.10, RSSGrowing: true},
 			want: "OOM risk – memory growth",
 		},
 		{
 			name: "belowOomThresholds",
 			row:  ProcMetrics{RSSMB: 400, FaultsPerSec: 300, RSSRatio: 0.05},
+			want: "OK",
+		},
+		{
+			name: "bigButStableNotOOM",
+			row:  ProcMetrics{RSSMB: 2048, FaultsPerSec: 500, RSSRatio: 0.4, RSSGrowing: false},
 			want: "OK",
 		},
 		{
@@ -365,7 +370,7 @@ func TestBuildProcMetricsBPFRSSPreferred(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 512 << 20},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil)
 	row, ok := index[42]
 	if !ok {
 		t.Fatal("missing row for pid 42")
@@ -387,10 +392,82 @@ func TestBuildProcMetricsFallbackToProcRSS(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 99, Comm: "app", Faults: 10, FaultsPerSec: 10, RSSBytes: 0},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil)
 	row := index[99]
 	if math.Abs(row.RSSMB-256) > 1e-3 {
 		t.Fatalf("expected /proc fallback RSS (256MB), got %.3f MB", row.RSSMB)
+	}
+}
+
+func TestRSSTracker(t *testing.T) {
+	tracker := NewRSSTracker(3)
+
+	// First tick: not enough data
+	tracker.Record(1, 100)
+	if tracker.IsGrowing(1, 10) {
+		t.Fatal("should not be growing with only 1 sample")
+	}
+
+	// Second tick: growing
+	tracker.Record(1, 120)
+	if !tracker.IsGrowing(1, 10) {
+		t.Fatal("should be growing: 100 -> 120 (delta 20 >= 10)")
+	}
+
+	// Third tick: still growing
+	tracker.Record(1, 150)
+	if !tracker.IsGrowing(1, 10) {
+		t.Fatal("should be growing: 100 -> 120 -> 150")
+	}
+
+	// Fourth tick: drops (not monotonic)
+	tracker.Record(1, 140) // window is now [120, 150, 140]
+	if tracker.IsGrowing(1, 10) {
+		t.Fatal("should not be growing: 150 -> 140 is a drop")
+	}
+
+	// Stable process: no growth
+	tracker.Record(2, 500)
+	tracker.Record(2, 500)
+	tracker.Record(2, 500)
+	if tracker.IsGrowing(2, 10) {
+		t.Fatal("stable RSS should not be flagged as growing")
+	}
+
+	// Prune removes inactive PIDs
+	tracker.Prune(map[uint32]bool{1: true})
+	if tracker.IsGrowing(2, 10) {
+		t.Fatal("pruned PID should have no history")
+	}
+	if len(tracker.history) != 1 {
+		t.Fatalf("expected 1 PID after prune, got %d", len(tracker.history))
+	}
+}
+
+func TestBuildProcMetricsWithTracker(t *testing.T) {
+	t.Cleanup(func() { rssBytesForPIDs = memory.RSSBytesForPIDs })
+	rssBytesForPIDs = func(pids []int) map[int]uint64 { return nil }
+
+	tracker := NewRSSTracker(3)
+	interval := time.Second
+
+	// Simulate 3 ticks of growing RSS for a leaking process
+	for _, rssBytes := range []uint64{200 << 20, 400 << 20, 600 << 20} {
+		pageFaults := []types.PageFaultStat{
+			{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: rssBytes},
+		}
+		_, _ = BuildProcMetrics(nil, pageFaults, nil, interval, tracker)
+	}
+
+	// On the 3rd tick, the process should be classified as OOM risk
+	pageFaults := []types.PageFaultStat{
+		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 800 << 20},
+	}
+	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, tracker)
+	row := index[42]
+	if row.Diagnosis != "OOM risk – memory growth" {
+		t.Fatalf("expected OOM risk with growing RSS, got %s (RSSMB=%.1f, RSSGrowing=%v)",
+			row.Diagnosis, row.RSSMB, row.RSSGrowing)
 	}
 }
 
