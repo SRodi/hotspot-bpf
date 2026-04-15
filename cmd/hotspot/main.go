@@ -162,37 +162,41 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
 	focusGroups := report.SelectFocusGroups(filteredRows)
 
-	var buf bytes.Buffer
-	buf.WriteString(ui.Banner())
+	// --- Build the fixed header (banner + status) ---
+	var header bytes.Buffer
+	header.WriteString(ui.Banner())
 
 	timestamp := ui.C(ui.Dim, time.Now().Format(time.RFC3339))
 	interval := ui.C(ui.Dim, cfg.interval.String())
-	fmt.Fprintf(&buf, "%s  %s │ %s  %s\n",
+	fmt.Fprintf(&header, "%s  %s │ %s  %s\n",
 		ui.C(ui.Bold+ui.White, "hotspot-bpf"), ui.C(ui.Dim, "(Ctrl+C to exit)"),
 		ui.C(ui.Gray, "Updated:"), timestamp)
-	fmt.Fprintf(&buf, "%s  %s\n", ui.C(ui.Gray, "Interval:"), interval)
+	fmt.Fprintf(&header, "%s  %s\n", ui.C(ui.Gray, "Interval:"), interval)
+
+	// --- Build the scrollable body (tables + focus) ---
+	var body bytes.Buffer
 
 	// Focus section — all non-OK processes grouped by diagnosis
 	if len(focusGroups) > 0 {
-		buf.WriteString(ui.SectionHeader("Focus · Processes requiring attention"))
+		body.WriteString(ui.SectionHeader("Focus · Processes requiring attention"))
 		for _, group := range focusGroups {
-			buf.WriteString(ui.FocusGroupHeader(group.Diagnosis, len(group.Procs)))
+			body.WriteString(ui.FocusGroupHeader(group.Diagnosis, len(group.Procs)))
 			for _, proc := range group.Procs {
-				buf.WriteString(ui.FocusEntry(proc.Comm, proc.PID, report.FocusSummary(proc), proc.Diagnosis))
+				body.WriteString(ui.FocusEntry(proc.Comm, proc.PID, report.FocusSummary(proc), proc.Diagnosis))
 			}
 		}
 	} else if len(filteredRows) == 0 {
-		fmt.Fprintf(&buf, "\n%s No processes matched current filters (topk=%d, hide-kernel=%t)\n",
+		fmt.Fprintf(&body, "\n%s No processes matched current filters (topk=%d, hide-kernel=%t)\n",
 			ui.C(ui.Dim, "[–]"), cfg.topK, cfg.hideKernel)
 	}
 
 	// CPU Usage table
-	buf.WriteString(ui.SectionHeader(fmt.Sprintf("CPU Hotspots · Top %d processes by CPU time (window %v)", cfg.topK, cfg.interval)))
+	body.WriteString(ui.SectionHeader(fmt.Sprintf("CPU Hotspots · Top %d processes by CPU time (window %v)", cfg.topK, cfg.interval)))
 	cpuRows := report.CPUUsageRows(filteredRows, cfg.topK)
 	if len(cpuRows) == 0 {
-		fmt.Fprintln(&buf, ui.C(ui.Dim, "No CPU samples for this window"))
+		fmt.Fprintln(&body, ui.C(ui.Dim, "No CPU samples for this window"))
 	} else {
-		tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+		tw := tabwriter.NewWriter(&body, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tCPU(%)\tCore%\tLastCore\tDiag")
 		for _, row := range cpuRows {
 			diag := ui.DiagLabel(row.Diagnosis)
@@ -205,15 +209,15 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 
 	// CPU Contention table
 	if contentionErr != nil {
-		buf.WriteString(ui.SectionHeader("Scheduler Contention"))
-		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("unavailable: %v", contentionErr)))
+		body.WriteString(ui.SectionHeader("Scheduler Contention"))
+		fmt.Fprintf(&body, "%s\n", ui.C(ui.Dim, fmt.Sprintf("unavailable: %v", contentionErr)))
 	} else {
-		buf.WriteString(ui.SectionHeader(fmt.Sprintf("Scheduler Contention · Which processes preempt others (window %v)", cfg.interval)))
+		body.WriteString(ui.SectionHeader(fmt.Sprintf("Scheduler Contention · Which processes preempt others (window %v)", cfg.interval)))
 		rows := report.FilterContentionRows(contentionStats, filterCfg, procIndex, cfg.topK)
 		if len(rows) == 0 {
-			fmt.Fprintln(&buf, ui.C(ui.Dim, "No preemptions recorded in this window"))
+			fmt.Fprintln(&body, ui.C(ui.Dim, "No preemptions recorded in this window"))
 		} else {
-			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+			tw := tabwriter.NewWriter(&body, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "VICTIM PID\tVICTIM\tAGGRESSOR PID\tAGGRESSOR\tCOUNT")
 			for _, pair := range rows {
 				fmt.Fprintf(tw, "%d\t%s\t%d\t%s\t%d\n",
@@ -224,15 +228,15 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 	}
 
 	// Memory Pressure table
-	buf.WriteString(ui.SectionHeader(fmt.Sprintf("Memory Pressure · Top %d processes by page fault rate", cfg.topK)))
+	body.WriteString(ui.SectionHeader(fmt.Sprintf("Memory Pressure · Top %d processes by page fault rate", cfg.topK)))
 	if pfErr != nil {
-		fmt.Fprintf(&buf, "%s\n", ui.C(ui.Dim, fmt.Sprintf("Page fault tracker unavailable: %v", pfErr)))
+		fmt.Fprintf(&body, "%s\n", ui.C(ui.Dim, fmt.Sprintf("Page fault tracker unavailable: %v", pfErr)))
 	} else {
 		costRows := report.CPUCostRows(filteredRows, cfg.topK)
 		if len(costRows) == 0 {
-			fmt.Fprintln(&buf, ui.C(ui.Dim, "No page faults recorded in this window"))
+			fmt.Fprintln(&body, ui.C(ui.Dim, "No page faults recorded in this window"))
 		} else {
-			tw := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+			tw := tabwriter.NewWriter(&body, 0, 0, 2, ' ', 0)
 			fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tCPU(ms)\tRSS(MB)\tFaults\tFaults/sec\tCost/Fault(ms)\tDiag")
 			for _, row := range costRows {
 				diag := ui.DiagLabel(row.Diagnosis)
@@ -244,13 +248,65 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		}
 	}
 
-	clearScreen()
-	fmt.Print(buf.String())
+	// --- Compose final output: fixed header + truncated body ---
+	renderFrame(header.String(), body.String())
 	return nil
 }
 
-func clearScreen() {
-	fmt.Print("\033[H\033[2J")
+// renderFrame writes a flicker-free frame to the terminal.
+//
+// The header is always displayed in full at the top of the screen (pinned).
+// The body is truncated to fit the remaining terminal height; if overflow
+// occurs, a "▼ N more lines below" indicator replaces the last visible line.
+//
+// Flicker is eliminated by:
+//  1. Moving cursor to home (\033[H]) instead of clearing the screen
+//  2. Overwriting existing content in-place
+//  3. Clearing only leftover lines after the new content (\033[J)
+func renderFrame(header, body string) {
+	_, termHeight, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || termHeight <= 0 {
+		termHeight = 50 // safe fallback for non-TTY / pipe
+	}
+
+	headerLines := strings.Split(strings.TrimRight(header, "\n"), "\n")
+	bodyLines := strings.Split(strings.TrimRight(body, "\n"), "\n")
+
+	// Reserve space: all header lines + at least 1 body line
+	availableForBody := termHeight - len(headerLines)
+	if availableForBody < 1 {
+		availableForBody = 1
+	}
+
+	// Truncate body if it overflows the terminal
+	truncated := false
+	overflow := 0
+	if len(bodyLines) > availableForBody {
+		overflow = len(bodyLines) - availableForBody
+		// Leave room for the overflow indicator on the last visible line
+		bodyLines = bodyLines[:availableForBody-1]
+		truncated = true
+	}
+
+	// Assemble the frame
+	var frame bytes.Buffer
+	frame.WriteString("\033[H") // cursor home — no clear, avoids flash
+	for _, line := range headerLines {
+		frame.WriteString(line)
+		frame.WriteString("\033[K\n") // clear to end of line (removes stale chars)
+	}
+	for _, line := range bodyLines {
+		frame.WriteString(line)
+		frame.WriteString("\033[K\n")
+	}
+	if truncated {
+		indicator := ui.C(ui.Dim, fmt.Sprintf("  ▼ %d more lines below (increase terminal height)", overflow+1))
+		frame.WriteString(indicator)
+		frame.WriteString("\033[K\n")
+	}
+	frame.WriteString("\033[J") // clear from cursor to end of screen (removes stale content)
+
+	fmt.Print(frame.String())
 }
 
 func enableSingleView() func() {
