@@ -1,0 +1,69 @@
+# hotspot-bpf classification thresholds
+#
+# This file controls how processes are diagnosed in the TUI Focus banner.
+# All values below are the built-in defaults. Uncomment and adjust as needed.
+#
+# Diagnosis precedence (highest to lowest):
+#   1. OOM risk – memory growth
+#   2. CPU-bound
+#   3. Mem-thrashing
+#   4. Starved
+#   5. Noisy neighbor
+#   6. OK (default, no rule matched)
+#
+# A process is evaluated top-to-bottom and receives the first matching label.
+# See docs/diagnosis-guide.md for detailed explanations of each diagnosis.
+
+# --- OOM risk – memory growth ---
+# Triggers when a process has GROWING RSS (trend-based) AND exceeds size/fault
+# thresholds. All three conditions must be met simultaneously.
+#
+# Lowering rss_mb or rss_ratio makes detection more sensitive but may flag
+# normal large applications. Raising faults_per_sec reduces false positives
+# but delays detection of slow leaks.
+oom:
+  rss_mb: 500            # RSS >= this value (MB) OR rss_ratio is met
+  rss_ratio: 0.10        # RSS >= this fraction of total RAM (0.0–1.0)
+  faults_per_sec: 200    # page faults/sec >= this value
+
+# --- CPU-bound ---
+# Triggers when a process uses significant CPU without memory pressure.
+# Raise cpu_percent on busy systems where 50% is normal for workers.
+cpu_bound:
+  cpu_percent: 50        # CPU usage must exceed this (%)
+  max_faults_per_sec: 1  # faults/sec must be below this
+  max_preempted: 0       # preemption count must be at or below this
+
+# --- Mem-thrashing ---
+# Two tiers: severe (very costly faults) and moderate (costly faults).
+# Both require CPU to be low — high CPU + high faults is usually computation,
+# not thrashing. Adjust cost_per_fault based on your storage speed (SSDs have
+# lower fault cost than spinning disks).
+mem_thrashing:
+  severe_faults_per_sec: 1000   # fault rate for severe tier
+  severe_cost_per_fault: 0.5    # CPU ms per fault for severe tier
+  moderate_faults_per_sec: 500  # fault rate for moderate tier
+  moderate_cost_per_fault: 0.1  # CPU ms per fault for moderate tier
+  max_cpu_percent: 20           # CPU must be below this (%)
+
+# --- Starved ---
+# Triggers when a process is frequently preempted and gets little CPU.
+# In high-contention environments, raise min_preempted to reduce noise.
+starved:
+  min_preempted: 100     # preempted at least this many times in the window
+  max_cpu_percent: 10    # CPU must be below this (%)
+
+# --- Noisy neighbor ---
+# Triggers when a process frequently preempts others while using significant CPU.
+# Lower min_preempts_others to catch less aggressive neighbors.
+noisy_neighbor:
+  min_preempts_others: 100  # preempted other processes at least this many times
+  min_cpu_percent: 30       # CPU must exceed this (%)
+
+# --- RSS trend tracker ---
+# Controls the growth detection that gates OOM classification.
+# Increasing window_ticks requires longer sustained growth before triggering.
+# Increasing min_delta_mb ignores small fluctuations.
+rss_tracker:
+  window_ticks: 3    # number of sampling ticks to track (minimum 2)
+  min_delta_mb: 10   # net RSS growth (MB) required to flag as "growing"
