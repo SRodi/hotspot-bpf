@@ -1,158 +1,163 @@
 # hotspot-bpf
 
-hotspot-bpf uses eBPF to turn raw kernel events into real-time performance explanations.
-It correlates CPU time, scheduler contention, and page-fault pressure in a single window, revealing why a process is slow, starved, or heading toward OOM.
-Traditional tools only show usage. hotspot shows **cause and effect**.
+**eBPF performance lens** — real-time root-cause diagnosis for Linux processes.
 
-## Demo
+hotspot-bpf correlates CPU time, scheduler contention, page-fault pressure, and RSS growth in a single terminal view. Instead of showing raw numbers and leaving interpretation to you, it tells you **why** a process is slow, starved, or heading toward OOM.
 
-We launch a Python memory leak, and as the process's RSS and fault rate cross the threshold, hotspot-bpf diagnoses it as an OOM-risk process by correlating CPU usage, page-fault rate, and RSS growth in real time.
+> Two small eBPF programs. One Go binary. Zero dependencies at runtime.
 
-![hotspot CLI demo](static/demo.gif)
-
-`hotspot-bpf` combines **two tiny eBPF programs** with a Go TUI to answer the three questions that `top`, `htop`, and `perf` cannot answer together:
-
-| What it reveals | Why it matters |
-|------------------|----------------|
-| Who is burning CPU? | Fast diagnosis of CPU-bound workloads |
-| Who is stealing CPU? | Real victim/aggressor contention visibility |
-| Who is stalling on memory faults? | Page-fault pressure & OOM risk detection |
-
-All signals are sampled in **one sliding time window**, so **cause / effect** is visible instantly.
+![hotspot-bpf detecting an OOM-risk memory leak in real time](static/hotspot-oom.png)
 
 ---
 
-## What hotspot-bpf does (in one view)
+## What it detects
 
-- **Nanosecond-accurate CPU usage** via `sched/sched_switch`
-- **Victim ↔ aggressor CPU contention** (which PID preempts which PID)
-- **Real-time page fault rate** via `handle_mm_fault` kprobe
-- **CPU cost per fault (ms)** — detects inefficient workloads  
-- **Auto classification:**  
-  `CPU-bound`, `Starved`, `Mem-thrashing`, `Noisy neighbor`, `OOM risk`, `OK`
+hotspot automatically classifies every visible process into one of six diagnoses — heuristic labels derived from one sampling window:
 
-> Traditional tools show these signals separately — hotspot cross-correlates them live.
+| Diagnosis | Meaning |
+|-----------|---------|
+| **OOM risk** | RSS growing monotonically + high page-fault rate |
+| **CPU-bound** | Saturating a CPU core with no memory pressure |
+| **Mem-thrashing** | High-rate page faults that cost real CPU time |
+| **Starved** | Frequently preempted, getting little CPU |
+| **Noisy neighbor** | Preempting others while consuming significant CPU |
+| **OK** | No anomaly detected |
 
----
-
-## Why not top/htop/perf?
-
-| hotspot-bpf | Traditional tools |
-|-------------|-------------------|
-| CPU + contention + page faults in one window | Only independent views |
-| Victim/aggressor mapping | Total context switches only |
-| Root-cause labels | Manual interpretation required |
-| Uses eBPF tracepoints + kprobes | Mostly /proc sampling |
-| cgroup-aware | Usually per-process only |
+All thresholds are [configurable via YAML](#custom-thresholds).
 
 ---
 
-## Live Snapshot
+## Quick start
 
-```text
-[!] Focus: python3 (pid 170276)
-    Reason: OOM risk – memory growth – 1.1 GB RSS, 1103 faults/sec
+### Runtime requirements
 
-[Top 5 CPU, window 5s]
-PID     COMM        CGROUP                CPU(ms)  CPU(%)  Diag
-170276  python3     session-518.scope     43.84    0.40    OOM risk – memory growth
+| Requirement | Notes |
+|-------------|-------|
+| **Linux kernel ≥ 5.5** with BTF | `ls /sys/kernel/btf/vmlinux` must succeed. Recommended ≥ 5.8 for broadest kprobe compatibility. |
+| **root** or `CAP_BPF` + `CAP_PERFMON` | eBPF program loading requires elevated privileges |
+| x86_64 | ARM64 support is not yet available |
 
-[CPU Contention - last 5s]
-No preemptions recorded in this window
+### Build requirements
 
-[CPU Cost per Fault – CPU vs Page Faults]
-PID     COMM        RSS(MB)  Faults/sec  CPU Cost/Fault (ms)  Diagnosis
-170276  python3     1154.5   1102.6      0.01                 OOM risk – memory growth
-```
-
-## How it works
-
-| File | Purpose |
+| Tool | Purpose |
 |------|---------|
-|bpf/cpu_hotspot.c | Tracepoint for sched/sched_switch → CPU time + contention map|
-|bpf/memory_faults.c | Kprobe on handle_mm_fault → page faults + in-kernel RSS per PID|
-|pkg/collector/* | Go CO-RE wrappers (generated via bpf2go)|
-|pkg/report | Merges stats, classifies processes, tracks RSS trends|
-|cmd/hotspot | TUI: focus banner + CPU table + contention + fault efficiency|
+| [Go 1.24+](https://go.dev/doc/install) | Builds the CLI |
+| [Clang / LLVM 15+](https://llvm.org/docs/GettingStarted.html) | Compiles eBPF C to BPF bytecode |
+| [bpftool](https://bpftool.dev/) | Generates `vmlinux.h` from kernel BTF |
+| [bpf2go](https://github.com/cilium/ebpf/tree/main/cmd/bpf2go) | Generates Go bindings for eBPF objects |
+| linux-headers | Kernel struct definitions for eBPF compilation |
 
-For detailed design and component diagrams, see **[docs/architecture.md](docs/architecture.md)**.
+> macOS / Windows can cross-compile the Go binary but cannot run eBPF. Use Linux for testing.
 
-For a complete explanation of each diagnosis label (Focus Reason), see **[docs/diagnosis-guide.md](docs/diagnosis-guide.md)**.
-
-## Requirements (Linux only)
-
-| Requirement | Why it matters | Official docs / references |
-|-------------|----------------|-----------------------------|
-| Linux kernel 5.8+ with BTF (`/sys/kernel/btf/vmlinux`) | Enables CO-RE relocation for eBPF programs (sched tracepoint & mm fault kprobe) | [Linux BPF docs](https://www.kernel.org/doc/html/latest/bpf/index.html) |
-| Go 1.24+ | Builds the CLI and runs `bpf2go` | [Go installation guide](https://go.dev/doc/install) |
-| Clang + LLVM 15+ / make / pkg-config / gcc | Compiles the eBPF object code used by `bpf2go` | [LLVM Getting Started guide](https://llvm.org/docs/GettingStarted.html) |
-| Matching kernel headers (`linux-headers-$(uname -r)`) | Provides exact struct/API definitions required to compile eBPF / kernel-space related code | [Kernel Headers explained – Linux Kernel Newbies](https://kernelnewbies.org/KernelHeaders) |
-| `bpftool` | Dumps BTF into `bpf/vmlinux.h` and manages eBPF programs/maps | [bpftool official site](https://bpftool.dev/) |
-| `bpf2go` (from `cilium/ebpf`) | Generates Go bindings + object files for the eBPF collectors | [`bpf2go` repository](https://github.com/cilium/ebpf/tree/main/cmd/bpf2go) |
-
-macOS/Windows can build the CLI but cannot run eBPF. Use Linux for runtime testing.
-
-## Quick Start
+### Build and run
 
 ```sh
 git clone https://github.com/srodi/hotspot-bpf.git
 cd hotspot-bpf
 
+# Install build dependencies (Debian/Ubuntu)
 sudo apt install clang llvm bpftool gcc linux-headers-"$(uname -r)"
-
 go install github.com/cilium/ebpf/cmd/bpf2go@latest
 export PATH="$HOME/go/bin:$PATH"
 
+# Generate BPF bindings
 sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
 go generate ./...
 
+# Run
 sudo go run ./cmd/hotspot -interval 5s -topk 5
 ```
 
-## Useful flags & tips
+---
 
-|Flag	|Description|
-|-------------|-------------------|
-|-interval 2s	| Faster sampling|
-|-topk 10	| Show more rows|
-|-hide-kernel=false	| Include kthreads|
-|-cgroup-filter pods.slice | Scope to workloads|
-|-config thresholds.yaml | Custom classification thresholds|
-|-generate-config | Print default config YAML and exit|
+## What hotspot adds beyond top/htop/perf
 
-### Custom Classification Thresholds
+| Capability | hotspot-bpf | top / htop | perf |
+|------------|-------------|------------|------|
+| CPU + contention + faults in one view | ✅ | ❌ separate tools | ❌ separate subcommands |
+| Victim ↔ aggressor mapping | ✅ who preempted whom | ❌ total context switches only | partial (perf sched) |
+| Per-core saturation detection | ✅ flags single-core bottlenecks | ❌ system-wide % only | ❌ |
+| Automatic root-cause labels | ✅ | ❌ manual interpretation | ❌ |
+| RSS growth trend tracking | ✅ detects leaks over time | ❌ point-in-time snapshot | ❌ |
+| cgroup-aware filtering | ✅ | limited | ✅ |
+| Zero instrumentation | ✅ eBPF tracepoints + kprobes | ✅ /proc sampling | ✅ PMU / tracepoints |
 
-All diagnosis thresholds are configurable via a YAML file. Generate the
-default configuration as a starting point:
+hotspot is not a replacement for `perf` — it's a **triage tool** that answers "what's wrong right now?" in seconds, so you know where to dig deeper.
+
+---
+
+## How it works
+
+```
+  Kernel                    BPF Programs              BPF Maps                Go Userspace
+┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────────┐
+│ tp_btf/          │──▶│ cpu_hotspot.c    │──▶│ pid_stats        │──▶│ cpu.Collector         │
+│ sched_switch     │   │ (CPU time +      │   │ cpu_contention   │   │                       │
+│ (BTF raw TP)     │   │  contention +    │   │ (per-TGID)       │   │ report.BuildProcMetrics│
+│                  │   │  core tracking)  │   │                  │   │ ├─ merge CPU + memory  │
+├──────────────────┤   ├──────────────────┤   ├──────────────────┤   │ ├─ classify process    │
+│ handle_mm_fault  │──▶│ memory_faults.c  │──▶│ page_faults      │──▶│ └─ track RSS trend    │
+│ (kprobe)         │   │ (faults + RSS)   │   │ (per-TGID)       │   │                       │
+│                  │   │                  │   │                  │   │ TUI (flicker-free)    │
+└──────────────────┘   └──────────────────┘   └──────────────────┘   └──────────────────────┘
+```
+
+All BPF maps are keyed by **TGID** (process ID), ensuring CPU and memory data merges correctly even for multi-threaded applications. Maps are reset after each sampling window — metrics reflect only the current interval, not cumulative totals.
+
+| Component | File | Role |
+|-----------|------|------|
+| CPU collector | `bpf/cpu_hotspot.c` | `tp_btf/sched_switch` → nanosecond CPU time, victim/aggressor contention, CPU core ID |
+| Memory collector | `bpf/memory_faults.c` | `handle_mm_fault` kprobe → page fault count + in-kernel RSS |
+| Collectors (Go) | `pkg/collector/` | CO-RE wrappers generated by bpf2go; read and reset BPF maps |
+| Report engine | `pkg/report/` | Merges CPU + memory stats, classifies processes, tracks RSS trends |
+| TUI | `cmd/hotspot/` | Flicker-free terminal UI with colorized diagnosis labels |
+| Config | `pkg/config/` | YAML-driven thresholds with commented defaults |
+
+📖 **[Architecture deep-dive](docs/architecture.md)** · 📖 **[Diagnosis guide](docs/diagnosis-guide.md)**
+
+---
+
+## CLI flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-interval` | `5s` | Sampling window duration |
+| `-topk` | `10` | Rows per table section |
+| `-hide-kernel` | `true` | Hide kernel threads (kworker, ksoftirqd, …) |
+| `-cgroup-filter` | | Only show processes whose cgroup contains this substring |
+| `-config` | | Path to YAML threshold config file |
+| `-generate-config` | | Print default config YAML to stdout and exit |
+
+---
+
+## Custom thresholds
+
+All diagnosis thresholds are configurable. Generate the defaults as a starting point:
 
 ```sh
 sudo go run ./cmd/hotspot -generate-config > thresholds.yaml
 ```
 
-Edit the file to tune thresholds for your environment, then pass it at runtime:
+Edit to taste, then pass at runtime:
 
 ```sh
-sudo go run ./cmd/hotspot -config thresholds.yaml
+sudo go run ./cmd/hotspot -config thresholds.yaml -interval 5s
 ```
 
-Any value not specified in the file retains its default. See the generated
-file for detailed comments explaining each parameter, or refer to
-[docs/diagnosis-guide.md](docs/diagnosis-guide.md) for threshold semantics.
+Any value not specified in the file retains its compiled-in default. See [`thresholds.yaml`](thresholds.yaml) for detailed comments explaining every parameter and how to tune it.
 
-## Testing Scenarios
+---
 
-Each diagnosis can be triggered with the examples below. On **multi-core
-machines** (8+ cores), single-threaded workloads produce low system-wide
-CPU percentages (e.g. one busy core = 5% on a 20-core machine). Use the
-provided test config to lower thresholds for reliable reproduction.
+## Testing scenarios
 
-### Test Configuration (recommended for multi-core machines)
+Every diagnosis can be reproduced with the scripts below. On **multi-core machines** (8+ cores), single-threaded workloads produce low system-wide CPU% (one busy core ≈ 5% on a 20-core host). Use the test config to lower thresholds.
 
-Save this as `test-thresholds.yaml` and run with `-config test-thresholds.yaml`:
+<details>
+<summary><strong>Test config for multi-core machines</strong></summary>
+
+Save as `test-thresholds.yaml` — **not suitable for production** (will produce false positives):
 
 ```yaml
-# Lowered thresholds for testing on multi-core machines.
-# NOT suitable for production — will produce false positives.
 oom:
   rss_mb: 200
   rss_ratio: 0.02
@@ -177,127 +182,112 @@ mem_thrashing:
 sudo go run ./cmd/hotspot -config test-thresholds.yaml -interval 5s
 ```
 
----
+</details>
 
-### Testing CPU-bound
-
-A tight loop with no memory allocation and no contention.
+<details>
+<summary><strong>CPU-bound</strong> — tight loop with no memory pressure</summary>
 
 ```sh
-# Single-core busy loop (will show ~5% on a 20-core machine)
 yes > /dev/null &
 YES_PID=$!
 sleep 30
 kill $YES_PID
 ```
 
-**Expected diagnosis**: `CPU-bound` — high CPU, near-zero faults, no preemptions.
+**Expected**: `CPU-bound` — high per-core CPU%, near-zero faults, minimal preemptions.
 
-> On multi-core machines, use `-config test-thresholds.yaml` (cpu_percent: 3)
-> so that a single-core workload triggers the classification.
+> On multi-core machines, use `-config test-thresholds.yaml` so a single-core workload triggers classification.
 
----
+</details>
 
-### Testing Starved + Noisy neighbor
-
-Pin a victim and an aggressor to the **same CPU core** so the scheduler is
-forced to preempt one in favour of the other. This triggers both diagnoses
-simultaneously — the aggressor is the "Noisy neighbor" and the victim is
-"Starved".
+<details>
+<summary><strong>Starved + Noisy neighbor</strong> — two processes pinned to one core</summary>
 
 ```sh
-# Terminal 1 — Aggressor: normal-priority busy loop pinned to core 0
+# Aggressor: normal-priority busy loop on core 0
 taskset -c 0 bash -c 'while true; do :; done' &
-AGGRESSOR_PID=$!
+AGGRESSOR=$!
 
-# Terminal 2 — Victim: low-priority busy loop pinned to the SAME core
+# Victim: low-priority busy loop on the SAME core
 taskset -c 0 nice -n 19 bash -c 'while true; do :; done' &
-VICTIM_PID=$!
+VICTIM=$!
 
-# Let it run for 30 seconds
 sleep 30
-kill $AGGRESSOR_PID $VICTIM_PID
+kill $AGGRESSOR $VICTIM
 ```
 
-**Expected diagnoses**:
-- The **victim** (nice -n 19 process) → `Starved` — preempted 100+ times,
-  very low CPU%.
-- The **aggressor** (normal priority) → `Noisy neighbor` — preempts the
-  victim repeatedly while consuming most of the core's CPU time.
+**Expected**:
+- Victim → `Starved` — preempted 100+ times, very low CPU%
+- Aggressor → `Noisy neighbor` — preempts the victim repeatedly
 
-> On multi-core machines, use `-config test-thresholds.yaml` to lower the
-> CPU% and preemption count thresholds. With 20 cores, a single-core
-> aggressor shows ~5% system-wide CPU.
+> Use `-config test-thresholds.yaml` on multi-core machines.
 
----
+</details>
 
-### Testing Mem-thrashing
-
-Force expensive page faults by repeatedly discarding pages with
-`madvise(MADV_DONTNEED)` and then re-accessing them. Each re-fault costs
-CPU time to re-zero or re-populate the page.
+<details>
+<summary><strong>Mem-thrashing</strong> — expensive re-faulting via madvise</summary>
 
 ```sh
 python3 - << 'THRASH'
-import mmap, os, time, random
+import mmap, time, random
 
-# Allocate 256 MB of anonymous memory
 size = 256 * 1024 * 1024
 mm = mmap.mmap(-1, size, prot=mmap.PROT_READ | mmap.PROT_WRITE)
 
-# Repeatedly discard and re-fault pages
 while True:
-    # Tell kernel to drop all pages — next access triggers new faults
     mm.madvise(mmap.MADV_DONTNEED)
-    # Touch pages in random order to trigger faults
     for _ in range(5000):
         offset = random.randint(0, size - 4096) & ~4095
-        mm[offset] = 65  # triggers a page fault
-    time.sleep(0.1)      # keep CPU% low
+        mm[offset] = 65
+    time.sleep(0.1)
 THRASH
 ```
 
-**Expected diagnosis**: `Mem-thrashing` — high fault rate (500+/sec), each
-fault costs measurable CPU time, but total CPU% stays below 20%.
+**Expected**: `Mem-thrashing` — high fault rate (500+/sec), measurable CPU cost per fault, low total CPU%.
 
-> The `time.sleep(0.1)` keeps CPU usage low. Without it the process may
-> classify as OK or CPU-bound instead, since faults become too cheap
-> relative to total CPU.
+> The `time.sleep(0.1)` keeps CPU low. Without it, faults become too cheap relative to CPU and the process may classify as OK.
 
----
+</details>
 
-### Testing OOM risk – memory growth
-
-A Python memory leak that allocates ~40 MB/s. RSS crosses the 500 MB
-detection threshold in about 25 seconds (roughly 5 sampling windows at the
-default 5s interval). The RSS trend tracker needs at least 2 consecutive
-ticks of growth before flagging OOM.
+<details>
+<summary><strong>OOM risk</strong> — Python memory leak (~40 MB/s)</summary>
 
 ```sh
 python3 - << 'EOF'
 import time
 x = []
 while True:
-    x.append(' ' * 10_000_000)  # ~10 MB per iteration
+    x.append(' ' * 10_000_000)
     time.sleep(0.25)
 EOF
 ```
 
-**Expected diagnosis**: `OOM risk – memory growth` — RSS is growing
-monotonically with high fault rate. Appears after ~15–25 seconds depending
-on your sampling interval.
+**Expected**: `OOM risk – memory growth` — RSS growing monotonically + high fault rate. Appears after 2–3 sampling ticks (~10–15s).
 
-> ⚠️ **Kill the process before it exhausts system memory.** Use Ctrl+C or
-> `kill` from another terminal. On a 32 GB machine you have several minutes.
+> ⚠️ **Kill before it exhausts memory.** Ctrl+C or `kill` from another terminal.
+
+</details>
+
+### Quick reference
+
+| Diagnosis | Workload | Key signal | Appears after |
+|-----------|----------|------------|---------------|
+| CPU-bound | `yes > /dev/null` | High per-core CPU%, no faults | 1 tick (5s) |
+| Starved | `nice -n 19` victim pinned with aggressor | High preemption, low CPU | 1 tick (5s) |
+| Noisy neighbor | Normal-priority aggressor pinned with victim | High preempts-others | 1 tick (5s) |
+| Mem-thrashing | Python madvise loop | High fault rate, costly faults | 1 tick (5s) |
+| OOM risk | Python memory leak | Growing RSS + high faults | 2–3 ticks |
 
 ---
 
-### Quick Reference
+## Screenshots
 
-| Diagnosis | Workload | Key Signal | Appears After |
-|-----------|----------|------------|---------------|
-| CPU-bound | `yes > /dev/null` | High CPU, no faults | 1 tick (5s) |
-| Starved | `nice -n 19` victim pinned with aggressor | High preemption, low CPU | 1 tick (5s) |
-| Noisy neighbor | Normal-priority aggressor pinned with victim | High preempts-others, moderate CPU | 1 tick (5s) |
-| Mem-thrashing | Python madvise loop | High fault rate, costly faults, low CPU | 1 tick (5s) |
-| OOM risk | Python memory leak | Growing RSS + high faults | 2–3 ticks (10–15s) |
+| OOM risk detection | Noisy neighbor / Starved | Mem-thrashing |
+|:------------------:|:------------------------:|:-------------:|
+| ![OOM](static/hotspot-oom.png) | ![Noisy](static/hotspot-noisy-neighbour.png) | ![Thrash](static/hotspot.png) |
+
+---
+
+## License
+
+[MIT](LICENSE)
