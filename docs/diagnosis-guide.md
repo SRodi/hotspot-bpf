@@ -100,14 +100,18 @@ behavior and simply means the encoder is compute-bound.
 ## Mem-thrashing
 
 **What it means:**
-The process is experiencing a high rate of **expensive** page faults —
-each fault costs significant CPU time. This typically indicates the
-working set exceeds available RAM, causing the kernel to constantly
-page data in and out.
+The process is experiencing high-rate page faults that indicate memory
+pressure. This can manifest as:
+- **Costly faults** — each fault requires significant CPU time (e.g., paging
+  from disk or swap). Indicates the working set exceeds available RAM.
+- **Fault storms** — very high minor-fault volume (e.g., repeated
+  madvise+re-fault cycles) where individual faults are cheap but the
+  sustained rate is abnormally high, wasting CPU and cache resources.
 
-**Trigger conditions (either set):**
+**Trigger conditions (any set):**
 - Fault rate > 1000/sec AND CPU cost per fault > 0.5ms AND CPU < 20%
 - Fault rate > 500/sec AND CPU cost per fault > 0.1ms AND CPU < 20%
+- Fault rate > 10 000/sec AND CPU < 20% (volume tier, cost-independent)
 
 **Possible consequences if ignored:**
 - Application throughput drops dramatically

@@ -267,6 +267,8 @@ func TestClassifyProc(t *testing.T) {
 		{"cpuBound", ProcMetrics{CPUPercent: 60, FaultsPerSec: 0.5}, "CPU-bound"},
 		{"thrashByCost", ProcMetrics{CPUPercent: 10, FaultsPerSec: 800, CPUCostPerFault: 0.2, Faults: 200}, "Mem-thrashing"},
 		{"thrashByVeryCostly", ProcMetrics{CPUPercent: 5, FaultsPerSec: 1500, CPUCostPerFault: 0.8, Faults: 20}, "Mem-thrashing"},
+		{"thrashByVolume", ProcMetrics{CPUPercent: 5, FaultsPerSec: 15000, CPUCostPerFault: 0.003, Faults: 75000}, "Mem-thrashing"},
+		{"highFaultsHighCPUNotThrash", ProcMetrics{CPUPercent: 25, FaultsPerSec: 15000, Faults: 75000}, "OK"},
 		{"starved", ProcMetrics{CPUPercent: 5, Preempted: 200}, "Starved"},
 		{"neighbor", ProcMetrics{CPUPercent: 35, PreemptsOthers: 120}, "Noisy neighbor"},
 		{"ok", ProcMetrics{CPUPercent: 5}, "OK"},
@@ -321,6 +323,16 @@ func TestClassifyProcTableDrivenScenarios(t *testing.T) {
 			name: "memThrashing",
 			row:  ProcMetrics{CPUPercent: 10, FaultsPerSec: 800, CPUCostPerFault: 0.2, Faults: 300},
 			want: "Mem-thrashing",
+		},
+		{
+			name: "memThrashingVolumeTier",
+			row:  ProcMetrics{CPUPercent: 5, FaultsPerSec: 50000, CPUCostPerFault: 0.003, Faults: 250000},
+			want: "Mem-thrashing",
+		},
+		{
+			name: "highFaultsHighCPUNotThrashing",
+			row:  ProcMetrics{CPUPercent: 25, FaultsPerSec: 50000, CPUCostPerFault: 0.003, Faults: 250000},
+			want: "OK",
 		},
 		{
 			name: "cpuBoundByCoreSaturation",

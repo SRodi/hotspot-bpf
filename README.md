@@ -18,7 +18,7 @@ hotspot automatically classifies every visible process into one of six diagnoses
 |-----------|---------|
 | **OOM risk** | RSS growing monotonically + high page-fault rate |
 | **CPU-bound** | Saturating a CPU core with no memory pressure |
-| **Mem-thrashing** | High-rate page faults that cost real CPU time |
+| **Mem-thrashing** | Costly page faults or very high fault volume with low CPU |
 | **Starved** | Frequently preempted, getting little CPU |
 | **Noisy neighbor** | Preempting others while consuming significant CPU |
 | **OK** | No anomaly detected |
@@ -175,6 +175,7 @@ mem_thrashing:
   moderate_cost_per_fault: 0.01
   severe_faults_per_sec: 500
   severe_cost_per_fault: 0.05
+  high_faults_per_sec: 5000
   max_cpu_percent: 10
 ```
 
@@ -225,7 +226,7 @@ kill $AGGRESSOR $VICTIM
 </details>
 
 <details>
-<summary><strong>Mem-thrashing</strong> — expensive re-faulting via madvise</summary>
+<summary><strong>Mem-thrashing</strong> — minor-fault storm via madvise</summary>
 
 ```sh
 python3 - << 'THRASH'
@@ -243,9 +244,9 @@ while True:
 THRASH
 ```
 
-**Expected**: `Mem-thrashing` — high fault rate (500+/sec), measurable CPU cost per fault, low total CPU%.
+**Expected**: `Mem-thrashing` — very high fault rate (10 000+/sec), low total CPU%. Triggers the volume tier.
 
-> The `time.sleep(0.1)` keeps CPU low. Without it, faults become too cheap relative to CPU and the process may classify as OK.
+> The `time.sleep(0.1)` keeps CPU% low so the process isn't excluded by the `max_cpu_percent` guard.
 
 </details>
 
@@ -275,7 +276,7 @@ EOF
 | CPU-bound | `yes > /dev/null` | High per-core CPU%, no faults | 1 tick (5s) |
 | Starved | `nice -n 19` victim pinned with aggressor | High preemption, low CPU | 1 tick (5s) |
 | Noisy neighbor | Normal-priority aggressor pinned with victim | High preempts-others | 1 tick (5s) |
-| Mem-thrashing | Python madvise loop | High fault rate, costly faults | 1 tick (5s) |
+| Mem-thrashing | Python madvise loop | Very high fault rate, low CPU | 1 tick (5s) |
 | OOM risk | Python memory leak | Growing RSS + high faults | 2–3 ticks |
 
 ---

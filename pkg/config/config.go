@@ -38,12 +38,16 @@ type CPUBoundThresholds struct {
 }
 
 // MemThrashingThresholds controls when a process is classified as "Mem-thrashing".
-// Two tiers: "severe" (very costly faults) and "moderate" (costly faults).
+// Three tiers:
+//   - "severe"  — very costly faults (major faults from disk/swap)
+//   - "moderate" — costly faults
+//   - "volume"  — very high fault rate regardless of per-fault cost (minor-fault storms)
 type MemThrashingThresholds struct {
 	SevereFaultsPerSec   float64 `yaml:"severe_faults_per_sec"`   // fault rate for severe tier
 	SevereCostPerFault   float64 `yaml:"severe_cost_per_fault"`   // CPU cost/fault (ms) for severe tier
 	ModerateFaultsPerSec float64 `yaml:"moderate_faults_per_sec"` // fault rate for moderate tier
 	ModerateCostPerFault float64 `yaml:"moderate_cost_per_fault"` // CPU cost/fault (ms) for moderate tier
+	HighFaultsPerSec     float64 `yaml:"high_faults_per_sec"`     // fault rate for volume tier (cost-independent)
 	MaxCPUPercent        float64 `yaml:"max_cpu_percent"`         // CPU must be BELOW this (rules out CPU-bound)
 }
 
@@ -84,6 +88,7 @@ func Default() Thresholds {
 			SevereCostPerFault:   0.5,
 			ModerateFaultsPerSec: 500,
 			ModerateCostPerFault: 0.1,
+			HighFaultsPerSec:     10000,
 			MaxCPUPercent:        20,
 		},
 		Starved: StarvedThresholds{
@@ -159,15 +164,19 @@ cpu_bound:
   max_preempted: 50      # preemption count must be at or below this
 
 # --- Mem-thrashing ---
-# Two tiers: severe (very costly faults) and moderate (costly faults).
-# Both require CPU to be low — high CPU + high faults is usually computation,
-# not thrashing. Adjust cost_per_fault based on your storage speed (SSDs have
-# lower fault cost than spinning disks).
+# Three tiers: severe (very costly faults), moderate (costly faults), and
+# volume (very high fault rate regardless of per-fault cost).
+# The cost-based tiers catch major faults from disk/swap. The volume tier
+# catches minor-fault storms (e.g., repeated madvise+re-fault cycles) where
+# individual faults are cheap but the sustained rate is abnormally high.
+# All tiers require CPU to be low — high CPU + high faults is usually
+# computation, not thrashing.
 mem_thrashing:
   severe_faults_per_sec: 1000   # fault rate for severe tier
   severe_cost_per_fault: 0.5    # CPU ms per fault for severe tier
   moderate_faults_per_sec: 500  # fault rate for moderate tier
   moderate_cost_per_fault: 0.1  # CPU ms per fault for moderate tier
+  high_faults_per_sec: 10000   # fault rate for volume tier (cost-independent)
   max_cpu_percent: 20           # CPU must be below this (%)
 
 # --- Starved ---

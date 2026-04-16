@@ -6,7 +6,7 @@
 //
 //   1. OOM risk – memory growth  (RSS growing + large + high fault rate)
 //   2. CPU-bound                  (high CPU, no faults, no preemption)
-//   3. Mem-thrashing              (high fault rate + costly faults)
+//   3. Mem-thrashing              (high fault rate + costly faults, or very high fault volume)
 //   4. Starved                    (frequently preempted, low CPU)
 //   5. Noisy neighbor             (frequently preempts others, high CPU)
 //   6. OK                         (none of the above)
@@ -476,6 +476,13 @@ func classifyProc(row *ProcMetrics, th config.Thresholds) string {
 	}
 	if row.FaultsPerSec > th.MemThrashing.ModerateFaultsPerSec &&
 		costlyFaults &&
+		row.CPUPercent < th.MemThrashing.MaxCPUPercent {
+		return "Mem-thrashing"
+	}
+	// Volume tier: very high minor-fault rate (e.g., madvise+re-fault storms)
+	// where individual faults are cheap but the sustained rate is abnormal.
+	if row.FaultsPerSec > th.MemThrashing.HighFaultsPerSec &&
+		row.Faults > 0 &&
 		row.CPUPercent < th.MemThrashing.MaxCPUPercent {
 		return "Mem-thrashing"
 	}
