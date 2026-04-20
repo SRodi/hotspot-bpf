@@ -23,7 +23,7 @@ jobs:
       - name: Install BPF build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang llvm bpftool gcc linux-headers-"$(uname -r)" linux-tools-common
+          sudo apt-get install -y clang llvm linux-tools-common linux-tools-"$(uname -r)" gcc linux-headers-"$(uname -r)"
 
       - name: Install bpf2go
         run: go install github.com/cilium/ebpf/cmd/bpf2go@latest
