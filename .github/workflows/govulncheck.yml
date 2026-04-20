@@ -24,6 +24,8 @@ jobs:
           go-version-file: go.mod
 
       - name: Run govulncheck
+        env:
+          GOFLAGS: ""
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          govulncheck ./...
+          GOOS=darwin govulncheck ./...
