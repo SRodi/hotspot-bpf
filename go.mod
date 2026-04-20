@@ -1,8 +1,8 @@
 module github.com/srodi/hotspot-bpf
 
-go 1.24.0
+go 1.26.0
 
-toolchain go1.24.10
+toolchain go1.26.2
 
 require (
 	github.com/cilium/ebpf v0.20.0

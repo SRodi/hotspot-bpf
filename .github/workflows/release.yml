@@ -9,7 +9,7 @@ permissions: {}
 
 env:
   # renovate: datasource=docker depName=golang
-  GO_IMAGE_VERSION: "1.24"
+  GO_IMAGE_VERSION: "1.26"
 
 jobs:
   release:
