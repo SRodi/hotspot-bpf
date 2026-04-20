@@ -26,5 +26,4 @@ jobs:
       - name: Run govulncheck
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
-          # Exit code 3 = vulnerabilities found (informational, not a build failure)
-          govulncheck -scan package ./... || [ $? -eq 3 ]
+          govulncheck -scan package ./...
