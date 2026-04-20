@@ -28,7 +28,7 @@ jobs:
             docker.io/library/golang:${GO_IMAGE_VERSION} \
             sh -c "
               apt-get update && \
-              apt-get install -y --no-install-recommends clang llvm bpftool gcc && \
+              apt-get install -y --no-install-recommends clang llvm bpftool gcc libbpf-dev && \
               go install github.com/cilium/ebpf/cmd/bpf2go@latest && \
               bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h && \
               go generate ./... && \
