@@ -6,7 +6,7 @@ toolchain go1.26.2
 
 require (
 	github.com/cilium/ebpf v0.20.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.37.0
 )
 
