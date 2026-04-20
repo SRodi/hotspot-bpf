@@ -44,6 +44,13 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
 
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          artifact-name: hotspot-bpf-linux-amd64.spdx.json
+          output-file: hotspot-bpf-linux-amd64.spdx.json
+          format: spdx-json
+
       - name: Sign release artifacts
         run: |
           cosign sign-blob --yes \
@@ -51,6 +58,11 @@ jobs:
             --output-certificate hotspot-bpf-linux-amd64.tar.gz.cert \
             --bundle hotspot-bpf-linux-amd64.tar.gz.bundle \
             hotspot-bpf-linux-amd64.tar.gz
+          cosign sign-blob --yes \
+            --output-signature hotspot-bpf-linux-amd64.spdx.json.sig \
+            --output-certificate hotspot-bpf-linux-amd64.spdx.json.cert \
+            --bundle hotspot-bpf-linux-amd64.spdx.json.bundle \
+            hotspot-bpf-linux-amd64.spdx.json
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -62,3 +74,7 @@ jobs:
             hotspot-bpf-linux-amd64.tar.gz.sig
             hotspot-bpf-linux-amd64.tar.gz.cert
             hotspot-bpf-linux-amd64.tar.gz.bundle
+            hotspot-bpf-linux-amd64.spdx.json
+            hotspot-bpf-linux-amd64.spdx.json.sig
+            hotspot-bpf-linux-amd64.spdx.json.cert
+            hotspot-bpf-linux-amd64.spdx.json.bundle
