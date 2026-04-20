@@ -53,9 +53,10 @@ sudo ./hotspot-bpf-linux-amd64 -interval 5s -topk 5
 |------|---------|
 | [Go 1.24+](https://go.dev/doc/install) | Builds the CLI |
 | [Clang / LLVM 15+](https://llvm.org/docs/GettingStarted.html) | Compiles eBPF C to BPF bytecode |
-| [bpftool](https://bpftool.dev/) | Generates `vmlinux.h` from kernel BTF |
 | [bpf2go](https://github.com/cilium/ebpf/tree/main/cmd/bpf2go) | Generates Go bindings for eBPF objects |
-| linux-headers | Kernel struct definitions for eBPF compilation |
+| [bpftool](https://bpftool.dev/) | (Optional) Regenerates `vmlinux.h` from kernel BTF |
+
+> A pre-generated `vmlinux.h` is checked into the repo. Regenerate it with `bpftool` only if you need to target a different kernel version.
 
 > macOS / Windows can cross-compile the Go binary but cannot run eBPF. Use Linux for testing.
 
@@ -66,12 +67,11 @@ git clone https://github.com/srodi/hotspot-bpf.git
 cd hotspot-bpf
 
 # Install build dependencies (Debian/Ubuntu)
-sudo apt install clang llvm bpftool gcc linux-headers-"$(uname -r)"
+sudo apt install clang llvm gcc
 go install github.com/cilium/ebpf/cmd/bpf2go@latest
 export PATH="$HOME/go/bin:$PATH"
 
-# Generate BPF bindings
-sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
+# Generate BPF bindings (vmlinux.h is already checked in)
 go generate ./...
 
 # Run

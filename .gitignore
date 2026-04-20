@@ -2,7 +2,6 @@ hotspot
 ASSESSMENT.md
 
 # Generated BPF bindings (recreate with: go generate ./...)
-bpf/vmlinux.h
 pkg/collector/cpu/hotspot_bpf_bpfel.*
 pkg/collector/cpu/hotspot_bpf_bpfeb.*
 pkg/collector/memory/memory_bpf_bpfel.*
