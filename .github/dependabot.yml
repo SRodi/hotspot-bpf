@@ -13,10 +13,3 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci"
-
-  - package-ecosystem: docker
-    directory: /.github/workflows
-    schedule:
-      interval: monthly
-    commit-message:
-      prefix: "ci"
