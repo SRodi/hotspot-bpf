@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
   schedule:
-    - cron: "0 6 * * 1" # every Monday at 06:00 UTC
+    - cron: "40 12 * * 1" # every Monday at 12:40 UTC
 
 permissions: read-all
 
