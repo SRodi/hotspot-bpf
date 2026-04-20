@@ -29,6 +29,16 @@ All thresholds are [configurable via YAML](#custom-thresholds).
 
 ## Quick start
 
+### Install from pre-built release
+
+Download the latest binary from the [Releases](https://github.com/srodi/hotspot-bpf/releases) page:
+
+```sh
+curl -LO https://github.com/srodi/hotspot-bpf/releases/latest/download/hotspot-bpf-linux-amd64.tar.gz
+tar xzf hotspot-bpf-linux-amd64.tar.gz
+sudo ./hotspot-bpf-linux-amd64 -interval 5s -topk 5
+```
+
 ### Runtime requirements
 
 | Requirement | Notes |

@@ -39,6 +39,9 @@ import (
 	"golang.org/x/term"
 )
 
+// version is set at build time via -ldflags.
+var version = "dev"
+
 const defaultInterval = 5 * time.Second
 
 type runConfig struct {
@@ -56,7 +59,13 @@ func parseConfig() runConfig {
 	cgroupFilter := flag.String("cgroup-filter", "", "only show processes whose cgroup path contains this substring (case-insensitive)")
 	configPath := flag.String("config", "", "path to YAML config file for classification thresholds (see -generate-config)")
 	generateConfig := flag.Bool("generate-config", false, "print the default config YAML to stdout and exit")
+	showVersion := flag.Bool("version", false, "print version and exit")
 	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("hotspot-bpf %s\n", version)
+		os.Exit(0)
+	}
 
 	if *generateConfig {
 		fmt.Print(config.DefaultYAML())
