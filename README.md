@@ -39,6 +39,29 @@ tar xzf hotspot-bpf-linux-amd64.tar.gz
 sudo ./hotspot-bpf-linux-amd64 -interval 5s -topk 5
 ```
 
+#### Verify release signature
+
+Releases are signed with [cosign](https://github.com/sigstore/cosign) using keyless (Sigstore) identity. To verify:
+
+```sh
+cosign verify-blob \
+  --signature hotspot-bpf-linux-amd64.tar.gz.sig \
+  --certificate hotspot-bpf-linux-amd64.tar.gz.cert \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp https://github.com/SRodi/hotspot-bpf/ \
+  hotspot-bpf-linux-amd64.tar.gz
+```
+
+Or using the Sigstore bundle:
+
+```sh
+cosign verify-blob \
+  --bundle hotspot-bpf-linux-amd64.tar.gz.bundle \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp https://github.com/SRodi/hotspot-bpf/ \
+  hotspot-bpf-linux-amd64.tar.gz
+```
+
 ### Runtime requirements
 
 | Requirement | Notes |
