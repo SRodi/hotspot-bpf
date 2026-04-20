@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # renovate: datasource=docker depName=golang
+  GO_IMAGE_VERSION: "1.24"
+
 jobs:
   release:
     runs-on: ubuntu-24.04
@@ -15,33 +19,23 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-
-      - name: Install BPF build dependencies
+      - name: Build release binary in container
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang llvm linux-tools-common linux-tools-"$(uname -r)" gcc linux-headers-"$(uname -r)"
-
-      - name: Install bpf2go
-        run: go install github.com/cilium/ebpf/cmd/bpf2go@latest
-
-      - name: Generate vmlinux.h
-        run: sudo bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h
-
-      - name: Generate BPF bindings
-        run: go generate ./...
-
-      - name: Build binary
-        env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: amd64
-        run: |
-          VERSION="${GITHUB_REF_NAME}"
-          go build -ldflags="-s -w -X main.version=${VERSION}" -o hotspot-bpf-linux-amd64 ./cmd/hotspot
+          docker run --rm \
+            --privileged \
+            --workdir /src \
+            --volume "$PWD":/src \
+            docker.io/library/golang:${GO_IMAGE_VERSION} \
+            sh -c "
+              apt-get update && \
+              apt-get install -y --no-install-recommends clang llvm bpftool gcc && \
+              go install github.com/cilium/ebpf/cmd/bpf2go@latest && \
+              bpftool btf dump file /sys/kernel/btf/vmlinux format c > bpf/vmlinux.h && \
+              go generate ./... && \
+              CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+                go build -ldflags='-s -w -X main.version=${GITHUB_REF_NAME}' \
+                -o hotspot-bpf-linux-amd64 ./cmd/hotspot
+            "
 
       - name: Package release archive
         run: |
