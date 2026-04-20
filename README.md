@@ -1,5 +1,7 @@
 # hotspot-bpf
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/SRodi/hotspot-bpf/badge)](https://scorecard.dev/viewer/?uri=github.com/SRodi/hotspot-bpf)
+
 **eBPF performance lens** — real-time root-cause diagnosis for Linux processes.
 
 hotspot-bpf correlates CPU time, scheduler contention, page-fault pressure, and RSS growth in a single terminal view. Instead of showing raw numbers and leaving interpretation to you, it tells you **why** a process is slow, starved, or heading toward OOM.
