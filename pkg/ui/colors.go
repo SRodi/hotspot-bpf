@@ -15,23 +15,14 @@ const (
 	Reset   = "\033[0m"
 	Bold    = "\033[1m"
 	Dim     = "\033[2m"
-	Italic  = "\033[3m"
 
 	Red     = "\033[38;5;196m"
 	Orange  = "\033[38;5;208m"
 	Yellow  = "\033[38;5;220m"
-	Green   = "\033[38;5;40m"
 	Cyan    = "\033[38;5;81m"
 	Blue    = "\033[38;5;33m"
-	Magenta = "\033[38;5;177m"
 	Gray    = "\033[38;5;245m"
 	White   = "\033[38;5;255m"
-
-	BgRed    = "\033[48;5;52m"
-	BgOrange = "\033[48;5;94m"
-	BgYellow = "\033[48;5;58m"
-	BgGreen  = "\033[48;5;22m"
-	BgCyan   = "\033[48;5;23m"
 )
 
 // colorEnabled controls whether ANSI codes are emitted.
@@ -109,25 +100,6 @@ func SectionHeader(title string) string {
 	return fmt.Sprintf("\n%s%s%s\n%s%s%s\n", Bold, White, title, Dim, line, Reset)
 }
 
-// FocusBanner formats the Focus section with severity-appropriate coloring.
-func FocusBanner(comm string, pid uint32, diagnosis, summary string) string {
-	if !colorEnabled {
-		return fmt.Sprintf("[!] Focus: %s (pid %d)\n   Reason: %s – %s\n", comm, pid, diagnosis, summary)
-	}
-
-	diagColor := DiagColor(diagnosis)
-	indicator := C(diagColor, "▌")
-	label := C(Bold+White, fmt.Sprintf("Focus: %s", comm))
-	pidStr := C(Dim, fmt.Sprintf("(pid %d)", pid))
-	reason := C(diagColor, diagnosis)
-	detail := C(Gray, summary)
-
-	return fmt.Sprintf("%s %s %s\n%s %s – %s\n",
-		indicator, label, pidStr,
-		indicator, reason, detail)
-}
-
-// FocusGroupHeader formats a diagnosis group header for the Focus section.
 func FocusGroupHeader(diagnosis string, count int) string {
 	diagColor := DiagColor(diagnosis)
 	if !colorEnabled {
