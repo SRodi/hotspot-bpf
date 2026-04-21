@@ -76,9 +76,10 @@ scheduler contention. It's doing pure computation — not waiting on I/O
 or fighting for resources.
 
 **Trigger conditions (ALL must be true):**
-- CPU usage > 50%
-- Page fault rate < 1 fault/sec
-- Preemption count = 0
+- CPU usage > 50% **or** single-core CPU ≥ 90% (catches single-threaded
+  bottlenecks on multi-core machines)
+- Page fault rate < 10 faults/sec
+- Preemption count ≤ 50
 
 **Possible consequences if ignored:**
 - Other processes on the same core(s) may receive less CPU time
@@ -224,7 +225,8 @@ scheduler forcibly switches tasks — cooperative yields don't count.
 
 ### "Page fault tracker unavailable"
 The `handle_mm_fault` kprobe failed to attach. Check kernel version
-(5.8+) and BTF availability (`ls /sys/kernel/btf/vmlinux`).
+(≥ 5.5, recommended 5.8+ for broadest kprobe compatibility) and BTF
+availability (`ls /sys/kernel/btf/vmlinux`).
 
 ### "No processes matched current filters"
 The filter flags (`-hide-kernel`, `-cgroup-filter`) excluded all

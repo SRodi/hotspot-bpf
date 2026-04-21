@@ -20,7 +20,6 @@ import (
 	"runtime"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/srodi/hotspot-bpf/pkg/collector/memory"
@@ -424,20 +423,6 @@ func fmtFloat(v float64) string {
 	return fmt.Sprintf("%.1f", v)
 }
 
-var totalMemOnce sync.Once
-var totalMem uint64
-
-func getTotalMem() uint64 {
-	totalMemOnce.Do(func() {
-		if v, err := memory.TotalMemoryBytes(); err == nil {
-			totalMem = v
-		} else {
-			totalMem = 1 // safe fallback
-		}
-	})
-	return totalMem
-}
-
 // classifyProc assigns a diagnosis label to a process based on its metrics.
 // Rules are evaluated in priority order — the first match wins.
 // See package doc for the full precedence table.
@@ -526,8 +511,8 @@ func isKernelThread(row ProcMetrics) bool {
 }
 
 // diagnosisSeverity maps a diagnosis label to a numeric priority (0–5).
-// Used by SelectFocusCandidate to pick the most critical process for the
-// Focus banner. Higher severity wins.
+// Used by SelectFocusGroups to pick the most critical processes for the
+// Focus section. Higher severity wins.
 func diagnosisSeverity(label string) int {
 	switch label {
 	case "OOM risk – memory growth":

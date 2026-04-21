@@ -100,32 +100,3 @@ func TestSectionHeader(t *testing.T) {
 		t.Error("SectionHeader missing underline")
 	}
 }
-
-func TestFocusBanner(t *testing.T) {
-	SetColorEnabled(false)
-	defer SetColorEnabled(true)
-
-	banner := FocusBanner("python3", 1234, "OOM risk – memory growth", "1.2 GB RSS")
-	if !strings.Contains(banner, "python3") {
-		t.Error("FocusBanner missing comm")
-	}
-	if !strings.Contains(banner, "1234") {
-		t.Error("FocusBanner missing pid")
-	}
-	if !strings.Contains(banner, "OOM risk") {
-		t.Error("FocusBanner missing diagnosis")
-	}
-}
-
-func TestFocusBannerWithColor(t *testing.T) {
-	SetColorEnabled(true)
-	defer SetColorEnabled(true)
-
-	banner := FocusBanner("node", 5678, "Starved", "preempted 42x")
-	if !strings.Contains(banner, "node") {
-		t.Error("colored FocusBanner missing comm")
-	}
-	if !strings.Contains(banner, Reset) {
-		t.Error("colored FocusBanner missing reset codes")
-	}
-}

@@ -24,13 +24,6 @@ type ContentionStat struct {
 	Count         uint64
 }
 
-// MemStat describes the RSS footprint for a process.
-type MemStat struct {
-	PID      int
-	Comm     string
-	RSSBytes uint64
-}
-
 // PageFaultStat tracks per-PID major+minor faults during a window.
 type PageFaultStat struct {
 	PID          uint32
