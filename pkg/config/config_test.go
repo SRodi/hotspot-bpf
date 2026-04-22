@@ -79,6 +79,30 @@ func TestLoadFileInvalidYAML(t *testing.T) {
 	}
 }
 
+func TestLoadFileWithExclude(t *testing.T) {
+	content := []byte(`
+exclude:
+  - wdavdaemon
+  - "2574"
+`)
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.yaml")
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cfg, err := LoadFile(path)
+	if err != nil {
+		t.Fatalf("LoadFile: %v", err)
+	}
+	if len(cfg.Exclude) != 2 {
+		t.Fatalf("expected 2 exclude entries, got %d", len(cfg.Exclude))
+	}
+	if cfg.Exclude[0] != "wdavdaemon" || cfg.Exclude[1] != "2574" {
+		t.Fatalf("unexpected exclude: %v", cfg.Exclude)
+	}
+}
+
 func TestDefaultYAMLIsValidYAML(t *testing.T) {
 	var cfg Thresholds
 	if err := yaml.Unmarshal([]byte(DefaultYAML()), &cfg); err != nil {

@@ -148,6 +148,21 @@ int BPF_PROG(handle_sched_switch, bool preempt,
 	u32 prev_tgid = BPF_CORE_READ(prev, tgid);
 	u32 next_tgid = BPF_CORE_READ(next, tgid);
 
+	// Skip processes that have released their user address space but are
+	// not kernel threads.  After a userspace process calls exit(), the
+	// kernel runs exit_mm() which sets task->mm = NULL.  The task_struct
+	// may still be scheduled briefly during cleanup, producing ghost
+	// entries in pid_stats and cpu_contention.  Filtering them here
+	// prevents stale PIDs from appearing in the TUI.
+	//
+	// Kernel threads (PF_KTHREAD) also have mm == NULL but are handled
+	// separately by the Go-side hide-kernel filter, so we leave them in.
+#define PF_KTHREAD 0x00200000
+	struct mm_struct *prev_mm = BPF_CORE_READ(prev, mm);
+	u32 prev_flags = BPF_CORE_READ(prev, flags);
+	if (prev_mm == NULL && !(prev_flags & PF_KTHREAD))
+		goto record_next;
+
 	// Track contention: when a non-idle process is switched out in favour of
 	// a different non-idle process, record the pair. Intra-process switches
 	// (same TGID, different threads) are NOT contention and are skipped.
@@ -164,7 +179,11 @@ int BPF_PROG(handle_sched_switch, bool preempt,
 
 	// Accumulate CPU time for the process that was running on this core.
 	// st->tgid was stored when this task was previously switched IN.
-	if (st->tgid != 0) {
+	// Validate that it matches the actual outgoing task (prev_tgid).
+	// After a map reset, cpu_state may hold a stale TGID for a process
+	// that has already exited; skipping the mismatch prevents ghost
+	// entries in pid_stats.
+	if (st->tgid != 0 && st->tgid == prev_tgid) {
 		u64 delta = ts - st->ts;
 		u32 tgid = st->tgid;
 		u32 cpu = bpf_get_smp_processor_id();
@@ -188,6 +207,7 @@ int BPF_PROG(handle_sched_switch, bool preempt,
 		}
 	}
 
+record_next:
 	// Record the incoming process so we can attribute its CPU time on the
 	// next switch-out from this core.
 	st->tgid = next_tgid;
