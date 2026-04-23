@@ -20,6 +20,7 @@ type Thresholds struct {
 	Starved      StarvedThresholds      `yaml:"starved"`
 	NoisyNeighbr NoisyNeighborThresholds `yaml:"noisy_neighbor"`
 	RSSTracker   RSSTrackerConfig       `yaml:"rss_tracker"`
+	Exclude      []string               `yaml:"exclude"`
 }
 
 // OOMThresholds controls when a process is classified as "OOM risk – memory growth".
@@ -200,5 +201,13 @@ noisy_neighbor:
 rss_tracker:
   window_ticks: 3    # number of sampling ticks to track (minimum 2)
   min_delta_mb: 10   # net RSS growth (MB) required to flag as "growing"
+
+# --- Exclude list ---
+# Hide specific processes by command name or PID. Useful for filtering
+# system daemons that appear as ghosts (e.g. wdavdaemon on WSL2).
+# Entries are matched case-insensitively against comm and exactly against PID.
+# exclude:
+#   - wdavdaemon
+#   - 2574
 `
 }

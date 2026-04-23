@@ -49,6 +49,7 @@ type runConfig struct {
 	topK         int
 	hideKernel   bool
 	cgroupFilter string
+	exclude      []string
 	thresholds   config.Thresholds
 }
 
@@ -57,6 +58,7 @@ func parseConfig() runConfig {
 	topK := flag.Int("topk", types.DefaultTopK, "number of processes to display per section")
 	hideKernel := flag.Bool("hide-kernel", true, "hide kernel threads such as kworker, ksoftirqd, etc")
 	cgroupFilter := flag.String("cgroup-filter", "", "only show processes whose cgroup path contains this substring (case-insensitive)")
+	exclude := flag.String("exclude", "", "comma-separated list of command names or PIDs to hide (e.g. wdavdaemon,2574)")
 	configPath := flag.String("config", "", "path to YAML config file for classification thresholds (see -generate-config)")
 	generateConfig := flag.Bool("generate-config", false, "print the default config YAML to stdout and exit")
 	showVersion := flag.Bool("version", false, "print version and exit")
@@ -86,7 +88,15 @@ func parseConfig() runConfig {
 		topK:         *topK,
 		hideKernel:   *hideKernel,
 		cgroupFilter: strings.ToLower(strings.TrimSpace(*cgroupFilter)),
+		exclude:      th.Exclude,
 		thresholds:   th,
+	}
+	if ex := strings.TrimSpace(*exclude); ex != "" {
+		for _, s := range strings.Split(ex, ",") {
+			if s = strings.TrimSpace(s); s != "" {
+				cfg.exclude = append(cfg.exclude, s)
+			}
+		}
 	}
 	if cfg.interval <= 0 {
 		cfg.interval = defaultInterval
@@ -167,7 +177,7 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 	}
 
 	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker, cfg.thresholds)
-	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter}
+	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter, Exclude: cfg.exclude}
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
 	focusGroups := report.SelectFocusGroups(filteredRows)
 

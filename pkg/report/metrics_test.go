@@ -118,6 +118,28 @@ func TestFilterMetricsRespectsKernelAndCgroup(t *testing.T) {
 	if len(scoped) != 1 || scoped[0].PID != 42 {
 		t.Fatalf("expected only kube cgroup row, got %+v", scoped)
 	}
+
+	// --exclude by comm name
+	exComm := FilterMetrics(rows, FilterConfig{HideKernel: boolPtr(false), Exclude: []string{"db"}})
+	if len(exComm) != 2 {
+		t.Fatalf("expected 2 rows after excluding db, got %d", len(exComm))
+	}
+	for _, r := range exComm {
+		if r.Comm == "db" {
+			t.Fatalf("db should be excluded")
+		}
+	}
+
+	// --exclude by PID
+	exPID := FilterMetrics(rows, FilterConfig{HideKernel: boolPtr(false), Exclude: []string{"42"}})
+	if len(exPID) != 2 {
+		t.Fatalf("expected 2 rows after excluding PID 42, got %d", len(exPID))
+	}
+	for _, r := range exPID {
+		if r.PID == 42 {
+			t.Fatalf("PID 42 should be excluded")
+		}
+	}
 }
 
 func TestCPUUsageRows(t *testing.T) {

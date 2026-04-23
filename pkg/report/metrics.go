@@ -107,6 +107,7 @@ type ProcMetrics struct {
 type FilterConfig struct {
 	HideKernel   *bool // nil defaults to true so kernel threads stay hidden unless explicitly shown
 	CgroupFilter string
+	Exclude      []string // command names or PIDs to hide
 }
 
 func (cfg FilterConfig) hideKernelEnabled() bool {
@@ -153,6 +154,7 @@ func BuildProcMetrics(
 	if intervalSeconds <= 0 {
 		intervalSeconds = 1
 	}
+
 	for _, stat := range cpuStats {
 		row := ensure(stat.PID)
 		if row == nil {
@@ -321,6 +323,9 @@ func FilterContentionRows(entries []types.ContentionStat, cfg FilterConfig, proc
 			if !vMatch && !aMatch {
 				continue
 			}
+		}
+		if isExcluded(victim, cfg.Exclude) || isExcluded(aggressor, cfg.Exclude) {
+			continue
 		}
 		rows = append(rows, entry)
 	}
@@ -493,7 +498,21 @@ func passesFilters(row ProcMetrics, cfg FilterConfig) bool {
 			return false
 		}
 	}
+	for _, ex := range cfg.Exclude {
+		if ex == fmt.Sprintf("%d", row.PID) || strings.EqualFold(ex, row.Comm) {
+			return false
+		}
+	}
 	return true
+}
+
+func isExcluded(row ProcMetrics, exclude []string) bool {
+	for _, ex := range exclude {
+		if ex == fmt.Sprintf("%d", row.PID) || strings.EqualFold(ex, row.Comm) {
+			return true
+		}
+	}
+	return false
 }
 
 func isKernelThread(row ProcMetrics) bool {

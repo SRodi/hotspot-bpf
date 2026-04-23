@@ -6,6 +6,7 @@ package cpu
 import (
 	"errors"
 	"fmt"
+	"runtime"
 	"sort"
 
 	"github.com/cilium/ebpf"
@@ -86,8 +87,16 @@ func (c *Collector) Snapshot(limit int) ([]types.CPUStat, error) {
 	return stats, nil
 }
 
-// Reset clears the BPF map so the next window can accumulate fresh values.
+// Reset clears the BPF maps so the next window can accumulate fresh values.
+// It first zeroes the per-CPU state array to invalidate stale TGIDs that would
+// otherwise resurrect ghost entries for processes that have already exited.
+// The cpu_state reset is best-effort; a failure does not prevent the main
+// pid_stats and cpu_contention maps from being cleared.
 func (c *Collector) Reset() error {
+	// Best-effort: zero cpu_state to prevent ghost entries from dead PIDs.
+	// Not fatal because the main map clearing below is more important.
+	_ = c.resetCPUState()
+
 	for attempt := 1; attempt <= resetSweepRetries; attempt++ {
 		iter := c.objs.PidStats.Iterate()
 		var pid uint32
@@ -127,6 +136,17 @@ func (c *Collector) Reset() error {
 	}
 
 	return nil
+}
+
+// resetCPUState zeroes every per-CPU slot of the cpu_state PERCPU_ARRAY.
+// This invalidates stale TGIDs so that the BPF handler's
+// "if (st->tgid != 0)" guard skips them, preventing ghost pid_stats entries
+// for processes that have already exited.
+func (c *Collector) resetCPUState() error {
+	numCPUs := runtime.NumCPU()
+	zeroes := make([]hotspot_bpfCpuState, numCPUs)
+	key := uint32(0)
+	return c.objs.CpuState.Put(&key, zeroes)
 }
 
 // Contention returns the busiest victim/aggressor pairs observed since the last reset.
