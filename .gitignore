@@ -6,3 +6,5 @@ pkg/collector/cpu/hotspot_bpf_bpfel.*
 pkg/collector/cpu/hotspot_bpf_bpfeb.*
 pkg/collector/memory/memory_bpf_bpfel.*
 pkg/collector/memory/memory_bpf_bpfeb.*
+pkg/collector/network/network_bpf_bpfel.*
+pkg/collector/network/network_bpf_bpfeb.*

@@ -90,6 +90,22 @@ static __always_inline void write_placeholder(char *dst, size_t len) {
 		dst[2] = 'a';
 }
 
+// kernfs_node.parent was renamed to __parent around kernel 6.15, so the field
+// name differs across the kernels we support (e.g. AKS 6.8 uses "parent", newer
+// kernels use "__parent"). CO-RE flavors let one object load on both: we probe
+// each name with bpf_core_field_exists (a load-time constant) and read whichever
+// exists on the running kernel, so the verifier drops the branch for the absent one.
+struct kernfs_node___new { struct kernfs_node *__parent; } __attribute__((preserve_access_index));
+struct kernfs_node___old { struct kernfs_node *parent; } __attribute__((preserve_access_index));
+
+static __always_inline struct kernfs_node *kn_parent(struct kernfs_node *kn) {
+        struct kernfs_node___new *knn = (void *)kn;
+        if (bpf_core_field_exists(knn->__parent))
+                return BPF_CORE_READ(knn, __parent);
+        struct kernfs_node___old *kno = (void *)kn;
+        return BPF_CORE_READ(kno, parent);
+}
+
 // snapshot_cgroup reads the leaf cgroup name for the current task via
 // task->cgroups->dfl_cgrp->kn->name. Falls back to the parent kernfs node
 // if the leaf name is empty. This is best-effort and not a full path.
@@ -115,7 +131,7 @@ static __always_inline bool snapshot_cgroup(char *dst, size_t len) {
 	const char *leaf = BPF_CORE_READ(kn, name);
 	if (leaf && bpf_core_read_str(dst, len, leaf) > 0)
 		return true;
-	struct kernfs_node *parent_kn = BPF_CORE_READ(kn, parent);
+	struct kernfs_node *parent_kn = kn_parent(kn);
 	if (parent_kn) {
 		const char *parent = BPF_CORE_READ(parent_kn, name);
 		if (parent)
