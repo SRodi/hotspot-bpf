@@ -31,6 +31,7 @@ import (
 
 	"github.com/srodi/hotspot-bpf/pkg/collector/cpu"
 	"github.com/srodi/hotspot-bpf/pkg/collector/memory"
+	"github.com/srodi/hotspot-bpf/pkg/collector/network"
 	"github.com/srodi/hotspot-bpf/pkg/config"
 	"github.com/srodi/hotspot-bpf/pkg/report"
 	"github.com/srodi/hotspot-bpf/pkg/types"
@@ -132,6 +133,12 @@ func main() {
 	}
 	defer memCollector.Close()
 
+	netCollector, err := network.NewCollector()
+	if err != nil {
+		log.Fatalf("initializing network collector: %v", err)
+	}
+	defer netCollector.Close()
+
 	cleanupTerminal := enableSingleView()
 	defer cleanupTerminal()
 
@@ -145,7 +152,7 @@ func main() {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if err := snapshotAndPrint(cpuCollector, memCollector, cfg, rssTracker); err != nil {
+			if err := snapshotAndPrint(cpuCollector, memCollector, netCollector, cfg, rssTracker); err != nil {
 				log.Printf("snapshot failed: %v", err)
 			}
 			if err := cpuCollector.Reset(); err != nil {
@@ -154,11 +161,14 @@ func main() {
 			if err := memCollector.Reset(); err != nil {
 				log.Printf("memory reset failed: %v", err)
 			}
+			if err := netCollector.Reset(); err != nil {
+				log.Printf("network reset failed: %v", err)
+			}
 		}
 	}
 }
 
-func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collector, cfg runConfig, rssTracker *report.RSSTracker) error {
+func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collector, netCollector *network.Collector, cfg runConfig, rssTracker *report.RSSTracker) error {
 	cpuLimit := max(cfg.topK*3, cfg.topK)
 	stats, err := cpuCollector.Snapshot(cpuLimit)
 	if err != nil {
@@ -176,7 +186,13 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		pageFaults = nil
 	}
 
-	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, cfg.interval, rssTracker, cfg.thresholds)
+	netLimit := max(cfg.topK*3, cfg.topK)
+	netStats, netErr := netCollector.Snapshot(netLimit)
+	if netErr != nil {
+		netStats = nil
+	}
+
+	procRows, procIndex := report.BuildProcMetrics(stats, pageFaults, contentionStats, netStats, cfg.interval, rssTracker, cfg.thresholds)
 	filterCfg := report.FilterConfig{HideKernel: &cfg.hideKernel, CgroupFilter: cfg.cgroupFilter, Exclude: cfg.exclude}
 	filteredRows := report.FilterMetrics(procRows, filterCfg)
 	focusGroups := report.SelectFocusGroups(filteredRows)
@@ -267,7 +283,27 @@ func snapshotAndPrint(cpuCollector *cpu.Collector, memCollector *memory.Collecto
 		}
 	}
 
+	// Network Bandwidth table
+	body.WriteString(ui.SectionHeader(fmt.Sprintf("Network Bandwidth · Top %d processes by throughput (window %v)", cfg.topK, cfg.interval)))
+	if netErr != nil {
+		fmt.Fprintf(&body, "%s\n", ui.C(ui.Dim, fmt.Sprintf("Network tracker unavailable: %v", netErr)))
+	} else {
+		netRows := report.NetworkBandwidthRows(filteredRows, cfg.topK)
+		if len(netRows) == 0 {
+			fmt.Fprintln(&body, ui.C(ui.Dim, "No network activity recorded in this window"))
+		} else {
+			tw := tabwriter.NewWriter(&body, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(tw, "PID\tCOMM\tCGROUP\tSENT(Mbps)\tRECV(Mbps)\tTOTAL(Mbps)")
+			for _, row := range netRows {
+				fmt.Fprintf(tw, "%d\t%s\t%s\t%.3f\t%.3f\t%.3f\n",
+					row.PID, row.Comm, row.Cgroup, row.NetSentMbps, row.NetRecvMbps, row.NetTotalMbps)
+			}
+			tw.Flush()
+		}
+	}
+
 	// --- Compose final output: fixed header + truncated body ---
+
 	renderFrame(header.String(), body.String())
 	return nil
 }

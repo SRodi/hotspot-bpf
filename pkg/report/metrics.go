@@ -4,12 +4,12 @@
 // The classification engine (classifyProc) applies a priority-ordered set of
 // heuristic rules. Diagnosis precedence (highest to lowest):
 //
-//   1. OOM risk – memory growth  (RSS growing + large + high fault rate)
-//   2. CPU-bound                  (high CPU, no faults, no preemption)
-//   3. Mem-thrashing              (high fault rate + costly faults, or very high fault volume)
-//   4. Starved                    (frequently preempted, low CPU)
-//   5. Noisy neighbor             (frequently preempts others, high CPU)
-//   6. OK                         (none of the above)
+//  1. OOM risk – memory growth  (RSS growing + large + high fault rate)
+//  2. CPU-bound                  (high CPU, no faults, no preemption)
+//  3. Mem-thrashing              (high fault rate + costly faults, or very high fault volume)
+//  4. Starved                    (frequently preempted, low CPU)
+//  5. Noisy neighbor             (frequently preempts others, high CPU)
+//  6. OK                         (none of the above)
 //
 // A process is evaluated top-to-bottom and receives the first matching label.
 // All metrics are windowed: they reflect one sampling interval, not cumulative.
@@ -101,6 +101,10 @@ type ProcMetrics struct {
 	PreemptsOthers  uint64
 	Diagnosis       string
 	RSSGrowing      bool
+
+	NetSentMbps  float64
+	NetRecvMbps  float64
+	NetTotalMbps float64
 }
 
 // FilterConfig controls which processes appear in CLI tables.
@@ -125,6 +129,7 @@ func BuildProcMetrics(
 	cpuStats []types.CPUStat,
 	pageFaults []types.PageFaultStat,
 	contention []types.ContentionStat,
+	netStats []types.NetworkStat,
 	interval time.Duration,
 	rssTracker *RSSTracker,
 	thresholds config.Thresholds,
@@ -206,6 +211,19 @@ func BuildProcMetrics(
 			}
 			aggressor.PreemptsOthers += pair.Count
 		}
+	}
+
+	for _, ns := range netStats {
+		row := ensure(ns.PID)
+		if row == nil {
+			continue
+		}
+		if row.Comm == "" {
+			row.Comm = ns.Comm
+		}
+		row.NetSentMbps = bytesToMbps(ns.SentBytes, intervalSeconds)
+		row.NetRecvMbps = bytesToMbps(ns.RecvBytes, intervalSeconds)
+		row.NetTotalMbps = row.NetSentMbps + row.NetRecvMbps
 	}
 
 	pidList := make([]int, 0, len(rows))
@@ -294,6 +312,23 @@ func CPUCostRows(rows []ProcMetrics, topK int) []ProcMetrics {
 		}
 		return candidates[i].CPUCostPerFault > candidates[j].CPUCostPerFault
 	})
+	if topK > 0 && len(candidates) > topK {
+		candidates = candidates[:topK]
+	}
+	return candidates
+}
+
+// NetworkBandwidthRows returns processes with network activity, ranked by total
+// throughput (highest first) and limited to topK.
+func NetworkBandwidthRows(rows []ProcMetrics, topK int) []ProcMetrics {
+	candidates := make([]ProcMetrics, 0, len(rows))
+	for _, row := range rows {
+		if row.NetTotalMbps <= 0 {
+			continue
+		}
+		candidates = append(candidates, row)
+	}
+	sort.Slice(candidates, func(i, j int) bool { return candidates[i].NetTotalMbps > candidates[j].NetTotalMbps })
 	if topK > 0 && len(candidates) > topK {
 		candidates = candidates[:topK]
 	}
@@ -418,6 +453,15 @@ func FocusSummary(row ProcMetrics) string {
 		return fmt.Sprintf("%.1f%% CPU, %s faults/sec",
 			row.CPUPercent, fmtFloat(row.FaultsPerSec))
 	}
+}
+
+// bytesToMbps converts a window's byte total into a megabits-per-second rate.
+// Network bandwidth is conventionally expressed in bits, so bytes are ×8.
+func bytesToMbps(b uint64, intervalSeconds float64) float64 {
+	if intervalSeconds <= 0 {
+		intervalSeconds = 1
+	}
+	return float64(b) * 8 / 1e6 / intervalSeconds
 }
 
 // fmtFloat formats a float with no decimals for >=10, one decimal otherwise.

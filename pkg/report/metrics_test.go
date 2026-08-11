@@ -30,7 +30,7 @@ func TestBuildProcMetricsMergesStats(t *testing.T) {
 	pageFaults := []types.PageFaultStat{{PID: 123, Comm: "worker", Cgroup: "/kubepods", Faults: 25, FaultsPerSec: 25}}
 	contention := []types.ContentionStat{{VictimPID: 123, VictimComm: "worker", AggressorPID: 456, AggressorComm: "noisy", Count: 150}}
 
-	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil, defaultTh)
+	rows, index := BuildProcMetrics(cpuStats, pageFaults, contention, nil, interval, nil, defaultTh)
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows, got %d", len(rows))
 	}
@@ -88,7 +88,7 @@ func TestBuildProcMetricsDefaultsInterval(t *testing.T) {
 	cpuStats := []types.CPUStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Ns: cpuNs}}
 	pageFaults := []types.PageFaultStat{{PID: 99, Comm: "tiny", Cgroup: "/scope", Faults: 10}}
 
-	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, 0, nil, defaultTh)
+	_, index := BuildProcMetrics(cpuStats, pageFaults, nil, nil, 0, nil, defaultTh)
 	row := index[99]
 	if row.CPUMs != float64(cpuNs)/1e6 {
 		t.Fatalf("unexpected CPUMs: %.3f", row.CPUMs)
@@ -441,7 +441,7 @@ func TestBuildProcMetricsBPFRSSPreferred(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 512 << 20},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil, defaultTh)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, nil, interval, nil, defaultTh)
 	row, ok := index[42]
 	if !ok {
 		t.Fatal("missing row for pid 42")
@@ -463,7 +463,7 @@ func TestBuildProcMetricsFallbackToProcRSS(t *testing.T) {
 	pageFaults := []types.PageFaultStat{
 		{PID: 99, Comm: "app", Faults: 10, FaultsPerSec: 10, RSSBytes: 0},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, nil, defaultTh)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, nil, interval, nil, defaultTh)
 	row := index[99]
 	if math.Abs(row.RSSMB-256) > 1e-3 {
 		t.Fatalf("expected /proc fallback RSS (256MB), got %.3f MB", row.RSSMB)
@@ -527,14 +527,14 @@ func TestBuildProcMetricsWithTracker(t *testing.T) {
 		pageFaults := []types.PageFaultStat{
 			{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: rssBytes},
 		}
-		_, _ = BuildProcMetrics(nil, pageFaults, nil, interval, tracker, defaultTh)
+		_, _ = BuildProcMetrics(nil, pageFaults, nil, nil, interval, tracker, defaultTh)
 	}
 
 	// On the 3rd tick, the process should be classified as OOM risk
 	pageFaults := []types.PageFaultStat{
 		{PID: 42, Comm: "leaker", Faults: 5000, FaultsPerSec: 1000, RSSBytes: 800 << 20},
 	}
-	_, index := BuildProcMetrics(nil, pageFaults, nil, interval, tracker, defaultTh)
+	_, index := BuildProcMetrics(nil, pageFaults, nil, nil, interval, tracker, defaultTh)
 	row := index[42]
 	if row.Diagnosis != "OOM risk – memory growth" {
 		t.Fatalf("expected OOM risk with growing RSS, got %s (RSSMB=%.1f, RSSGrowing=%v)",
@@ -591,7 +591,7 @@ func TestBuildProcMetricsMultiThreadedMerge(t *testing.T) {
 		{PID: tgid, Comm: "java", Cgroup: "/kubepods", Faults: 500, FaultsPerSec: 100, RSSBytes: 1 << 30},
 	}
 
-	rows, index := BuildProcMetrics(cpuStats, pageFaults, nil, interval, nil, defaultTh)
+	rows, index := BuildProcMetrics(cpuStats, pageFaults, nil, nil, interval, nil, defaultTh)
 
 	// Must produce exactly one row for the TGID.
 	if len(rows) != 1 {
@@ -643,7 +643,7 @@ func TestBuildProcMetricsContentionMerge(t *testing.T) {
 		{VictimPID: victimTGID, VictimComm: "victim-app", AggressorPID: aggressorTGID, AggressorComm: "aggressor-app", Count: 200},
 	}
 
-	_, index := BuildProcMetrics(cpuStats, pageFaults, contention, interval, nil, defaultTh)
+	_, index := BuildProcMetrics(cpuStats, pageFaults, contention, nil, interval, nil, defaultTh)
 
 	victim := index[victimTGID]
 	if victim.Preempted != 200 {

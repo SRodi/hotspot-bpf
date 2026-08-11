@@ -33,3 +33,14 @@ type PageFaultStat struct {
 	FaultsPerSec float64
 	RSSBytes     uint64
 }
+
+// NetworkStat holds per-PID network throughput observed during one sampling
+// window. Byte counters are raw window totals (egress/ingress wire bytes seen
+// by the cgroup_skb hooks); the report engine converts them into a Mbps rate
+// using the sampling interval, mirroring how CPUStat.Ns becomes CPUPercent.
+type NetworkStat struct {
+	PID       uint32
+	Comm      string
+	SentBytes uint64 // egress (transmitted) wire bytes in the window
+	RecvBytes uint64 // ingress (received) wire bytes in the window
+}
